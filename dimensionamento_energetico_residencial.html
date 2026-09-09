@@ -1,0 +1,1699 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel &mdash; Dimensionamento Energético Residencial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg-deep:#141a22;
+  --bg-panel:#1d2530;
+  --bg-panel-raised:#242e3b;
+  --line:#33404f;
+  --line-soft:#2a3441;
+  --text-primary:#edeff2;
+  --text-muted:#93a1b0;
+  --accent:#f5a623;
+  --accent-dim:#7a5417;
+  --accent-soft:rgba(245,166,35,.14);
+  --green:#4e9f6e;
+  --green-soft:rgba(78,159,110,.16);
+  --red:#e1523d;
+  --red-soft:rgba(225,82,61,.16);
+  --paper:#eceff3;
+  --paper-line:#c7cfd9;
+  --paper-text:#1b2430;
+  --radius-s:3px;
+  --radius-m:6px;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+  --sans:'Space Grotesk',system-ui,sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg-deep);
+  color:var(--text-primary);
+  font-family:var(--sans);
+  min-height:100vh;
+  line-height:1.5;
+}
+.hidden{display:none !important;}
+button{font-family:var(--sans);cursor:pointer;}
+input,select{font-family:var(--sans);}
+h1,h2,h3{font-family:var(--sans);margin:0 0 6px 0;font-weight:600;}
+a{color:var(--accent);}
+
+/* ---------- botões ---------- */
+.btn{
+  border:1px solid var(--line);
+  background:var(--bg-panel-raised);
+  color:var(--text-primary);
+  padding:9px 16px;
+  border-radius:var(--radius-s);
+  font-size:14px;
+  font-weight:500;
+  transition:border-color .15s ease, transform .1s ease;
+}
+.btn:hover{border-color:var(--accent);}
+.btn:active{transform:translateY(1px);}
+.btn-principal{
+  background:var(--accent);
+  color:#1b1002;
+  border:1px solid var(--accent);
+  font-weight:600;
+}
+.btn-principal:hover{background:#ffb840;border-color:#ffb840;}
+.btn-perigo{border-color:var(--red);color:var(--red);}
+.btn-perigo:hover{background:var(--red-soft);}
+.btn-texto{
+  background:none;border:none;color:var(--text-muted);
+  text-decoration:underline;padding:4px 0;font-size:13px;
+}
+.btn-texto:hover{color:var(--accent);}
+.btn-pequeno{padding:5px 10px;font-size:12.5px;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+
+/* ---------- campos ---------- */
+.campo{margin-bottom:14px;}
+.campo label{display:block;font-size:12.5px;color:var(--text-muted);margin-bottom:5px;letter-spacing:.01em;}
+.campo input[type=text],
+.campo input[type=email],
+.campo input[type=password],
+.campo input[type=number],
+.campo select{
+  width:100%;
+  background:var(--bg-deep);
+  border:1px solid var(--line);
+  color:var(--text-primary);
+  padding:9px 10px;
+  border-radius:var(--radius-s);
+  font-size:14px;
+}
+.campo input:focus,.campo select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent);}
+.campo .ajuda{font-size:12px;color:var(--text-muted);margin-top:4px;}
+.campo .erro-campo{font-size:12px;color:var(--red);margin-top:4px;display:none;}
+.linha-campos{display:flex;gap:12px;flex-wrap:wrap;}
+.linha-campos .campo{flex:1;min-width:150px;}
+.check-linha{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);margin:-4px 0 14px 0;}
+
+/* ---------- painel/cartão base (estilo quadro de disjuntores) ---------- */
+.painel{
+  background:var(--bg-panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius-m);
+  padding:22px;
+}
+.painel-claro{
+  background:var(--paper);
+  color:var(--paper-text);
+  border-radius:var(--radius-m);
+  padding:22px;
+}
+.painel-claro label{color:#54606f;}
+.painel-claro input, .painel-claro select{background:#fff;border:1px solid var(--paper-line);color:var(--paper-text);}
+.painel-claro .ajuda{color:#6b7686;}
+
+/* ---------- layout geral ---------- */
+#tela-auth{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+.auth-shell{
+  display:flex;
+  gap:36px;
+  align-items:center;
+  max-width:920px;
+  width:100%;
+}
+.auth-hero{flex:1;min-width:260px;}
+.auth-card{flex:1;min-width:320px;max-width:420px;}
+.readout{
+  font-family:var(--mono);
+  background:#0e131a;
+  border:1px solid var(--line);
+  border-radius:var(--radius-m);
+  padding:26px 22px;
+  position:relative;
+  overflow:hidden;
+}
+.readout::before{
+  content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.02) 0px,rgba(255,255,255,.02) 1px,transparent 1px,transparent 3px);
+  pointer-events:none;
+}
+.readout .rotulo{font-size:11px;letter-spacing:.08em;color:var(--text-muted);text-transform:uppercase;}
+.readout .valor{font-size:52px;color:var(--accent);font-weight:600;line-height:1.1;margin-top:6px;}
+.readout .valor span{font-size:22px;color:var(--accent-dim);margin-left:6px;}
+.auth-hero h1{font-size:26px;margin-top:22px;line-height:1.3;}
+.auth-hero p{color:var(--text-muted);font-size:14.5px;max-width:40ch;}
+.abas-auth{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--paper-line);}
+.abas-auth button{
+  flex:1;background:none;border:none;padding:10px 6px;font-size:13.5px;
+  color:#6b7686;border-bottom:2px solid transparent;font-weight:500;
+}
+.abas-auth button.ativa{color:var(--paper-text);border-bottom-color:var(--accent);}
+.mensagem-simulacao{
+  background:#fff7e6;border:1px solid #e6c477;color:#6b4f0d;
+  font-size:12.5px;padding:10px 12px;border-radius:var(--radius-s);margin-bottom:14px;
+}
+
+/* ---------- app logado ---------- */
+#tela-app{display:flex;min-height:100vh;}
+#nav-lateral{
+  width:230px;flex-shrink:0;
+  background:var(--bg-panel);
+  border-right:1px solid var(--line);
+  padding:20px 14px;
+  display:flex;flex-direction:column;
+}
+.marca{font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.03em;margin-bottom:26px;padding:0 6px;}
+.marca b{color:var(--text-primary);}
+.item-nav{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 10px;border-radius:var(--radius-s);
+  color:var(--text-muted);font-size:14px;font-weight:500;
+  background:none;border:none;width:100%;text-align:left;margin-bottom:2px;
+}
+.item-nav .chave{
+  width:26px;height:14px;border-radius:7px;border:1px solid var(--line);
+  position:relative;flex-shrink:0;
+}
+.item-nav .chave::after{
+  content:"";position:absolute;top:1px;left:1px;width:10px;height:10px;border-radius:50%;
+  background:var(--text-muted);transition:transform .15s ease,background .15s ease;
+}
+.item-nav.ativo{color:var(--text-primary);background:var(--bg-panel-raised);}
+.item-nav.ativo .chave{border-color:var(--accent);}
+.item-nav.ativo .chave::after{transform:translateX(11px);background:var(--accent);}
+.item-nav:hover{color:var(--text-primary);}
+#rodape-nav{margin-top:auto;padding-top:14px;border-top:1px solid var(--line-soft);}
+#rodape-nav .email-usuario{font-size:12px;color:var(--text-muted);display:block;margin-bottom:8px;word-break:break-all;}
+
+#conteudo{flex:1;padding:30px 38px;max-width:1080px;}
+.cabecalho-vista{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap;gap:12px;}
+.cabecalho-vista h2{font-size:22px;}
+.cabecalho-vista p{color:var(--text-muted);font-size:13.5px;margin:0;}
+
+.abas-imovel{display:flex;gap:6px;margin-bottom:22px;flex-wrap:wrap;}
+.abas-imovel button{
+  background:var(--bg-panel);border:1px solid var(--line);color:var(--text-muted);
+  padding:8px 14px;border-radius:var(--radius-s);font-size:13.5px;font-weight:500;
+}
+.abas-imovel button.ativa{color:var(--bg-deep);background:var(--accent);border-color:var(--accent);}
+
+/* ---------- tabela ---------- */
+table{width:100%;border-collapse:collapse;font-size:13.5px;}
+th{text-align:left;color:var(--text-muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.03em;padding:8px 10px;border-bottom:1px solid var(--line);}
+td{padding:10px 10px;border-bottom:1px solid var(--line-soft);}
+td.num{font-family:var(--mono);text-align:right;}
+tr:last-child td{border-bottom:none;}
+.tabela-scroll{overflow-x:auto;}
+
+/* ---------- cartões de listagem (imóveis) ---------- */
+.grade-cartoes{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+.cartao-imovel{
+  background:var(--bg-panel);border:1px solid var(--line);border-radius:var(--radius-m);
+  padding:18px;display:flex;flex-direction:column;gap:8px;
+}
+.cartao-imovel h3{font-size:16px;}
+.cartao-imovel .endereco{color:var(--text-muted);font-size:13px;}
+.cartao-imovel .consumo-mini{font-family:var(--mono);color:var(--accent);font-size:20px;margin-top:4px;}
+.cartao-imovel .acoes{display:flex;gap:8px;margin-top:auto;padding-top:10px;}
+.cartao-novo{
+  border:1px dashed var(--line);border-radius:var(--radius-m);
+  display:flex;align-items:center;justify-content:center;color:var(--text-muted);
+  min-height:120px;background:none;font-size:14px;font-weight:500;
+}
+.cartao-novo:hover{border-color:var(--accent);color:var(--accent);}
+
+/* ---------- estado vazio ---------- */
+.vazio{border:1px dashed var(--line);border-radius:var(--radius-m);padding:34px 20px;text-align:center;color:var(--text-muted);}
+.vazio strong{color:var(--text-primary);display:block;margin-bottom:6px;font-size:15px;}
+
+/* ---------- medidor grande (relatório) ---------- */
+.grade-relatorio{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-bottom:20px;}
+.status-limite{display:inline-block;padding:3px 9px;border-radius:20px;font-size:12px;font-weight:600;margin-top:10px;}
+.status-limite.ok{background:var(--green-soft);color:var(--green);}
+.status-limite.excedido{background:var(--red-soft);color:var(--red);}
+.lista-sugestoes{margin:10px 0 0 0;padding-left:18px;color:var(--text-primary);font-size:13.5px;}
+.lista-sugestoes li{margin-bottom:5px;}
+.grafico-caixa{background:var(--bg-panel);border:1px solid var(--line);border-radius:var(--radius-m);padding:18px;height:280px;}
+
+/* ---------- import ---------- */
+.zona-upload{
+  border:1px dashed var(--line);border-radius:var(--radius-m);padding:26px;text-align:center;color:var(--text-muted);
+}
+.linha-invalida{color:var(--red);font-size:13px;}
+.linha-valida{color:var(--green);font-size:13px;}
+
+/* ---------- toasts ---------- */
+#caixa-toasts{position:fixed;top:18px;right:18px;z-index:999;display:flex;flex-direction:column;gap:8px;}
+.toast{
+  background:var(--bg-panel-raised);border:1px solid var(--line);border-left:4px solid var(--accent);
+  color:var(--text-primary);padding:12px 16px;border-radius:var(--radius-s);font-size:13.5px;
+  max-width:320px;box-shadow:0 6px 18px rgba(0,0,0,.35);
+  animation:entra .18s ease;
+}
+.toast.sucesso{border-left-color:var(--green);}
+.toast.erro{border-left-color:var(--red);}
+@keyframes entra{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
+
+/* ---------- testes ---------- */
+.linha-teste{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--line-soft);font-size:13.5px;}
+.linha-teste .selo{font-family:var(--mono);font-weight:600;padding:1px 8px;border-radius:20px;font-size:12px;}
+.selo.passou{background:var(--green-soft);color:var(--green);}
+.selo.falhou{background:var(--red-soft);color:var(--red);}
+.resumo-testes{font-family:var(--mono);font-size:15px;margin-bottom:12px;}
+
+/* ---------- comparação ---------- */
+.grade-comparar{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;}
+.placar{display:flex;gap:20px;align-items:flex-end;margin-top:14px;flex-wrap:wrap;}
+.placar .num{font-family:var(--mono);font-size:30px;color:var(--accent);}
+.placar .diff.pos{color:var(--red);}
+.placar .diff.neg{color:var(--green);}
+
+/* ---------- responsivo ---------- */
+@media (max-width:820px){
+  #tela-app{flex-direction:column;}
+  #nav-lateral{width:100%;flex-direction:row;overflow-x:auto;padding:12px;align-items:center;}
+  .marca{display:none;}
+  #rodape-nav{margin-top:0;margin-left:auto;padding-top:0;border-top:none;display:flex;align-items:center;gap:10px;}
+  #rodape-nav .email-usuario{display:none;}
+  .item-nav{width:auto;white-space:nowrap;}
+  #conteudo{padding:20px;}
+  .auth-shell{flex-direction:column;}
+  .grade-relatorio,.grade-comparar{grid-template-columns:1fr;}
+}
+@media (prefers-reduced-motion:reduce){
+  .toast{animation:none;}
+}
+</style>
+</head>
+<body>
+<div id="caixa-toasts"></div>
+
+<!-- ===================== TELA DE AUTENTICAÇÃO ===================== -->
+<section id="tela-auth">
+  <div class="auth-shell">
+    <div class="auth-hero">
+      <div class="readout">
+        <div class="rotulo">Consumo estimado</div>
+        <div class="valor" id="hero-valor">0.0<span>kWh/mês</span></div>
+      </div>
+      <h1>Dimensionamento energético residencial</h1>
+      <p>Cadastre seu imóvel, registre os equipamentos e acompanhe o consumo mensal estimado da sua casa.</p>
+    </div>
+    <div class="auth-card painel-claro">
+      <div class="abas-auth">
+        <button data-aba-auth="entrar" class="ativa">Entrar</button>
+        <button data-aba-auth="criar">Criar conta</button>
+        <button data-aba-auth="esqueci">Esqueci a senha</button>
+      </div>
+
+      <!-- Entrar -->
+      <form id="form-entrar" class="painel-aba-auth">
+        <div class="campo">
+          <label for="entrar-email">E-mail</label>
+          <input type="email" id="entrar-email" required>
+        </div>
+        <div class="campo">
+          <label for="entrar-senha">Senha</label>
+          <input type="password" id="entrar-senha" required>
+          <div class="erro-campo" id="erro-entrar"></div>
+        </div>
+        <button type="submit" class="btn btn-principal" style="width:100%;">Entrar</button>
+        <button type="button" class="btn-texto" id="btn-convidado" style="margin-top:10px;">Continuar sem conta (modo convidado)</button>
+      </form>
+
+      <!-- Criar conta -->
+      <form id="form-criar" class="painel-aba-auth hidden">
+        <div class="campo">
+          <label for="criar-email">E-mail</label>
+          <input type="email" id="criar-email" required>
+          <div class="erro-campo" id="erro-criar-email"></div>
+        </div>
+        <div class="campo">
+          <label for="criar-senha">Senha</label>
+          <input type="password" id="criar-senha" required>
+          <div class="ajuda">Mínimo de 8 caracteres.</div>
+          <div class="erro-campo" id="erro-criar-senha"></div>
+        </div>
+        <button type="submit" class="btn btn-principal" style="width:100%;">Criar conta</button>
+      </form>
+
+      <!-- Esqueci a senha -->
+      <div id="painel-esqueci" class="painel-aba-auth hidden">
+        <div class="mensagem-simulacao">
+          Este protótipo não possui servidor de e-mail. O código de redefinição é exibido aqui mesmo, simulando o link que seria enviado por e-mail.
+        </div>
+        <form id="form-esqueci-email">
+          <div class="campo">
+            <label for="esqueci-email">E-mail cadastrado</label>
+            <input type="email" id="esqueci-email" required>
+            <div class="erro-campo" id="erro-esqueci-email"></div>
+          </div>
+          <button type="submit" class="btn btn-principal" style="width:100%;">Gerar código de redefinição</button>
+        </form>
+        <form id="form-esqueci-nova" class="hidden" style="margin-top:14px;">
+          <div class="campo">
+            <label for="esqueci-codigo">Código recebido</label>
+            <input type="text" id="esqueci-codigo" required>
+          </div>
+          <div class="campo">
+            <label for="esqueci-nova-senha">Nova senha</label>
+            <input type="password" id="esqueci-nova-senha" required>
+          </div>
+          <div class="campo">
+            <label for="esqueci-confirma-senha">Confirmar nova senha</label>
+            <input type="password" id="esqueci-confirma-senha" required>
+            <div class="erro-campo" id="erro-esqueci-nova"></div>
+          </div>
+          <button type="submit" class="btn btn-principal" style="width:100%;">Redefinir senha</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== APP PRINCIPAL ===================== -->
+<section id="tela-app" class="hidden">
+  <nav id="nav-lateral">
+    <div class="marca">PAINEL<b>//</b>ENERGIA</div>
+    <button class="item-nav ativo" data-vista="dashboard"><span class="chave"></span>Meus imóveis</button>
+    <button class="item-nav" data-vista="categorias"><span class="chave"></span>Categorias</button>
+    <button class="item-nav" data-vista="comparar"><span class="chave"></span>Comparar cenários</button>
+    <button class="item-nav" data-vista="testes"><span class="chave"></span>Testes automatizados</button>
+    <div id="rodape-nav">
+      <span class="email-usuario" id="rotulo-usuario"></span>
+      <button class="btn btn-pequeno" id="btn-sair">Sair</button>
+    </div>
+  </nav>
+
+  <div id="conteudo">
+
+    <!-- ---------- DASHBOARD ---------- -->
+    <div id="vista-dashboard" class="vista">
+      <div class="cabecalho-vista">
+        <div>
+          <h2>Meus imóveis</h2>
+          <p>Projetos de dimensionamento salvos.</p>
+        </div>
+      </div>
+      <div class="grade-cartoes" id="grade-imoveis"></div>
+    </div>
+
+    <!-- ---------- IMÓVEL (workspace) ---------- -->
+    <div id="vista-imovel" class="vista hidden">
+      <div class="cabecalho-vista">
+        <div>
+          <h2 id="titulo-imovel">Novo imóvel</h2>
+          <p>Cadastro, equipamentos, relatório e importação de planilha.</p>
+        </div>
+        <button class="btn" id="btn-voltar-dashboard">&larr; Meus imóveis</button>
+      </div>
+
+      <div class="abas-imovel">
+        <button data-aba-imovel="dados" class="ativa">Dados do imóvel</button>
+        <button data-aba-imovel="equipamentos" disabled>Equipamentos</button>
+        <button data-aba-imovel="relatorio" disabled>Relatório</button>
+        <button data-aba-imovel="importar" disabled>Importar planilha</button>
+      </div>
+
+      <!-- Aba: dados -->
+      <div id="aba-dados" class="aba-imovel-conteudo">
+        <div class="painel" style="max-width:520px;">
+          <div class="campo">
+            <label for="input-nome-imovel">Nome do imóvel</label>
+            <input type="text" id="input-nome-imovel">
+            <div class="erro-campo" id="erro-nome-imovel"></div>
+          </div>
+          <div class="campo">
+            <label for="input-endereco-imovel">Endereço</label>
+            <input type="text" id="input-endereco-imovel">
+            <div class="erro-campo" id="erro-endereco-imovel"></div>
+          </div>
+          <button class="btn btn-principal" id="btn-salvar-imovel">Salvar imóvel</button>
+          <button class="btn btn-perigo hidden" id="btn-excluir-imovel" style="margin-left:8px;">Excluir imóvel</button>
+        </div>
+      </div>
+
+      <!-- Aba: equipamentos -->
+      <div id="aba-equipamentos" class="aba-imovel-conteudo hidden">
+        <div class="painel" style="margin-bottom:18px;">
+          <h3 style="margin-bottom:14px;">Novo equipamento</h3>
+          <div class="linha-campos">
+            <div class="campo">
+              <label for="equip-nome">Nome</label>
+              <input type="text" id="equip-nome" list="lista-equip-referencia" autocomplete="off">
+              <datalist id="lista-equip-referencia"></datalist>
+              <div class="ajuda">Selecione um item conhecido para sugerir a potência.</div>
+            </div>
+            <div class="campo">
+              <label for="equip-categoria">Categoria</label>
+              <select id="equip-categoria"></select>
+            </div>
+            <div class="campo">
+              <label for="equip-potencia">Potência (W)</label>
+              <input type="number" id="equip-potencia" min="0" step="1">
+            </div>
+          </div>
+          <div class="linha-campos">
+            <div class="campo">
+              <label for="equip-quantidade">Quantidade</label>
+              <input type="number" id="equip-quantidade" min="1" step="1" value="1">
+            </div>
+            <div class="campo">
+              <label for="equip-horas-semana">Horas de uso/dia (seg. a sex.)</label>
+              <input type="number" id="equip-horas-semana" min="0" max="24" step="0.5" value="0">
+            </div>
+            <div class="campo">
+              <label for="equip-horas-fds">Horas de uso/dia (sáb. e dom.)</label>
+              <input type="number" id="equip-horas-fds" min="0" max="24" step="0.5" value="0">
+            </div>
+          </div>
+          <div class="check-linha">
+            <input type="checkbox" id="equip-mesmo-fds" checked>
+            <label for="equip-mesmo-fds" style="margin:0;color:var(--text-muted);">Usar as mesmas horas no fim de semana</label>
+          </div>
+          <div class="erro-campo" id="erro-equipamento" style="margin-bottom:10px;"></div>
+          <button class="btn btn-principal" id="btn-add-equipamento">Adicionar equipamento</button>
+        </div>
+
+        <div class="painel">
+          <h3 style="margin-bottom:14px;">Equipamentos cadastrados</h3>
+          <div class="tabela-scroll">
+            <table id="tabela-equipamentos">
+              <thead><tr>
+                <th>Nome</th><th>Categoria</th><th class="num">Potência (W)</th><th class="num">Qtd.</th>
+                <th class="num">h/dia semana</th><th class="num">h/dia fds</th><th class="num">Consumo (kWh/mês)</th><th></th>
+              </tr></thead>
+              <tbody id="corpo-tabela-equipamentos"></tbody>
+            </table>
+          </div>
+          <div id="vazio-equipamentos" class="vazio hidden" style="margin-top:14px;">
+            <strong>Nenhum equipamento cadastrado</strong>
+            Adicione o primeiro equipamento acima para começar a estimar o consumo.
+          </div>
+        </div>
+      </div>
+
+      <!-- Aba: relatório -->
+      <div id="aba-relatorio" class="aba-imovel-conteudo hidden">
+        <div class="grade-relatorio">
+          <div class="readout">
+            <div class="rotulo" id="relatorio-nome-endereco">&mdash;</div>
+            <div class="valor" id="relatorio-consumo-total">0.0<span>kWh/mês</span></div>
+            <span class="status-limite hidden" id="relatorio-status-limite"></span>
+            <ul class="lista-sugestoes hidden" id="relatorio-sugestoes"></ul>
+          </div>
+          <div class="painel">
+            <div class="linha-campos">
+              <div class="campo">
+                <label for="input-tarifa">Tarifa (R$/kWh)</label>
+                <input type="number" id="input-tarifa" min="0" step="0.01">
+                <div class="erro-campo" id="erro-tarifa"></div>
+              </div>
+              <div class="campo">
+                <label for="input-limite">Limite de consumo mensal (kWh)</label>
+                <input type="number" id="input-limite" min="0" step="1">
+              </div>
+            </div>
+            <div class="ajuda" style="margin-bottom:10px;">Custo estimado do mês:</div>
+            <div class="valor" style="font-size:30px;color:var(--text-primary);" id="relatorio-custo">R$ 0,00</div>
+            <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn" id="btn-exportar-csv">Exportar CSV</button>
+              <button class="btn" id="btn-exportar-pdf">Exportar PDF</button>
+            </div>
+          </div>
+        </div>
+        <div class="tabela-scroll" style="margin-bottom:20px;">
+          <table id="tabela-relatorio">
+            <thead><tr><th>Equipamento</th><th>Categoria</th><th class="num">Consumo (kWh/mês)</th></tr></thead>
+            <tbody id="corpo-tabela-relatorio"></tbody>
+          </table>
+        </div>
+        <div class="grafico-caixa">
+          <canvas id="grafico-pizza"></canvas>
+        </div>
+      </div>
+
+      <!-- Aba: importar -->
+      <div id="aba-importar" class="aba-imovel-conteudo hidden">
+        <div class="painel">
+          <h3>Importar equipamentos via planilha</h3>
+          <p class="ajuda">Formatos aceitos: CSV ou XLSX, com colunas <strong>nome</strong>, <strong>categoria</strong> e <strong>potencia</strong>. Equipamentos importados entram com quantidade 1 e horas de uso zeradas — ajuste-os na aba Equipamentos.</p>
+          <div class="zona-upload">
+            <input type="file" id="input-arquivo-planilha" accept=".csv,.xlsx,.xls">
+          </div>
+          <div id="resultado-importacao" style="margin-top:16px;"></div>
+          <button class="btn btn-principal hidden" id="btn-confirmar-importacao" style="margin-top:12px;">Confirmar importação</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- CATEGORIAS ---------- -->
+    <div id="vista-categorias" class="vista hidden">
+      <div class="cabecalho-vista">
+        <div><h2>Categorias de equipamentos</h2><p>Organize os equipamentos por categoria.</p></div>
+      </div>
+      <div class="painel" style="max-width:460px;margin-bottom:20px;">
+        <div class="linha-campos" style="align-items:flex-end;">
+          <div class="campo" style="margin-bottom:0;flex:1;">
+            <label for="input-nova-categoria">Nova categoria</label>
+            <input type="text" id="input-nova-categoria">
+          </div>
+          <button class="btn btn-principal" id="btn-add-categoria" style="height:38px;">Adicionar</button>
+        </div>
+        <div class="erro-campo" id="erro-categoria"></div>
+      </div>
+      <div class="painel" style="max-width:600px;">
+        <table>
+          <thead><tr><th>Categoria</th><th></th></tr></thead>
+          <tbody id="corpo-tabela-categorias"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ---------- COMPARAR CENÁRIOS ---------- -->
+    <div id="vista-comparar" class="vista hidden">
+      <div class="cabecalho-vista">
+        <div><h2>Comparar cenários</h2><p>Compare o consumo entre dois imóveis salvos.</p></div>
+      </div>
+      <div id="comparar-vazio" class="vazio hidden">
+        <strong>É necessário ao menos 2 imóveis salvos</strong>
+        Cadastre outro imóvel para habilitar a comparação.
+      </div>
+      <div id="comparar-conteudo">
+        <div class="grade-comparar">
+          <div class="campo">
+            <label for="select-cenario-a">Cenário A</label>
+            <select id="select-cenario-a"></select>
+          </div>
+          <div class="campo">
+            <label for="select-cenario-b">Cenário B</label>
+            <select id="select-cenario-b"></select>
+          </div>
+        </div>
+        <button class="btn btn-principal" id="btn-comparar">Comparar</button>
+        <div id="resultado-comparacao" style="margin-top:20px;"></div>
+      </div>
+    </div>
+
+    <!-- ---------- TESTES ---------- -->
+    <div id="vista-testes" class="vista hidden">
+      <div class="cabecalho-vista">
+        <div><h2>Testes automatizados</h2><p>Validações unitárias das regras de cálculo e cadastro.</p></div>
+      </div>
+      <button class="btn btn-principal" id="btn-rodar-testes" style="margin-bottom:18px;">Executar testes</button>
+      <div class="painel">
+        <div id="resumo-testes" class="resumo-testes"></div>
+        <div id="lista-testes"></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+<script>
+/* =========================================================================
+   DIMENSIONAMENTO ENERGÉTICO RESIDENCIAL — aplicação web
+   ========================================================================= */
+
+/* ---------- constantes de domínio ---------- */
+const CHAVE_ARMAZENAMENTO = 'app_state_v1';
+const DIAS_MES = 30;
+const FRACAO_DIAS_SEMANA = 5 / 7;
+const FRACAO_DIAS_FDS = 2 / 7;
+
+const CATEGORIAS_SEED = [
+  'Cozinha', 'Banheiro', 'Climatização', 'Sala', 'Escritório',
+  'Iluminação', 'Lavanderia', 'Limpeza', 'Eletrônicos', 'Área externa'
+];
+
+const EQUIP_REFERENCIA_SEED = [
+  { nome: 'Geladeira', categoria: 'Cozinha', potencia: 150 },
+  { nome: 'Freezer', categoria: 'Cozinha', potencia: 200 },
+  { nome: 'Micro-ondas', categoria: 'Cozinha', potencia: 1200 },
+  { nome: 'Forno elétrico', categoria: 'Cozinha', potencia: 1500 },
+  { nome: 'Cafeteira', categoria: 'Cozinha', potencia: 800 },
+  { nome: 'Liquidificador', categoria: 'Cozinha', potencia: 400 },
+  { nome: 'Chuveiro elétrico', categoria: 'Banheiro', potencia: 5500 },
+  { nome: 'Secador de cabelo', categoria: 'Banheiro', potencia: 1200 },
+  { nome: 'Ar-condicionado (split 9000 BTUs)', categoria: 'Climatização', potencia: 900 },
+  { nome: 'Ventilador', categoria: 'Climatização', potencia: 100 },
+  { nome: 'Aquecedor elétrico', categoria: 'Climatização', potencia: 1500 },
+  { nome: 'TV LED 42 polegadas', categoria: 'Sala', potencia: 100 },
+  { nome: 'Home theater', categoria: 'Sala', potencia: 100 },
+  { nome: 'Videogame (console)', categoria: 'Sala', potencia: 150 },
+  { nome: 'Notebook', categoria: 'Escritório', potencia: 65 },
+  { nome: 'Computador desktop', categoria: 'Escritório', potencia: 200 },
+  { nome: 'Roteador Wi-Fi', categoria: 'Escritório', potencia: 10 },
+  { nome: 'Impressora', categoria: 'Escritório', potencia: 300 },
+  { nome: 'Lâmpada LED', categoria: 'Iluminação', potencia: 9 },
+  { nome: 'Lâmpada incandescente', categoria: 'Iluminação', potencia: 60 },
+  { nome: 'Máquina de lavar roupas', categoria: 'Lavanderia', potencia: 500 },
+  { nome: 'Secadora de roupas', categoria: 'Lavanderia', potencia: 2000 },
+  { nome: 'Ferro de passar', categoria: 'Lavanderia', potencia: 1200 },
+  { nome: 'Aspirador de pó', categoria: 'Limpeza', potencia: 1400 },
+  { nome: 'Carregador de celular', categoria: 'Eletrônicos', potencia: 5 },
+  { nome: 'Bomba d\u2019água', categoria: 'Área externa', potencia: 750 }
+];
+
+/* ---------- estado em memória ---------- */
+let estado = null;         // carregado do window.storage
+let sessao = null;         // { email, convidado } — não persistido
+let idImovelAtual = null;
+let abaImovelAtual = 'dados';
+let arquivoImportadoLinhas = null; // linhas válidas pendentes de confirmação
+let graficoPizzaInstancia = null;
+
+function estadoInicial() {
+  return {
+    usuarios: {},
+    categorias: CATEGORIAS_SEED.map(nome => ({ id: gerarId(), nome })),
+    equipReferencia: EQUIP_REFERENCIA_SEED.map(e => ({ id: gerarId(), ...e })),
+    imoveis: []
+  };
+}
+
+function gerarId() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+async function carregarEstado() {
+  try {
+    const resultado = await window.storage.get(CHAVE_ARMAZENAMENTO, false);
+    if (resultado && resultado.value) {
+      const dados = JSON.parse(resultado.value);
+      // garante que campos novos existam mesmo em estados salvos antigos
+      dados.usuarios = dados.usuarios || {};
+      dados.categorias = dados.categorias || [];
+      dados.equipReferencia = dados.equipReferencia || [];
+      dados.imoveis = dados.imoveis || [];
+      return dados;
+    }
+    return estadoInicial();
+  } catch (erro) {
+    return estadoInicial();
+  }
+}
+
+async function salvarEstado() {
+  try {
+    const resultado = await window.storage.set(CHAVE_ARMAZENAMENTO, JSON.stringify(estado), false);
+    if (!resultado) throw new Error('sem resultado');
+    return true;
+  } catch (erro) {
+    mostrarToast('Não foi possível salvar os dados agora. Tente novamente em instantes.', 'erro');
+    return false;
+  }
+}
+
+/* =========================================================================
+   FUNÇÕES PURAS — cálculo e validação (reaproveitadas pelo painel de testes)
+   ========================================================================= */
+
+function calcularConsumoEquipamento(equip) {
+  const diasSemana = DIAS_MES * FRACAO_DIAS_SEMANA;
+  const diasFds = DIAS_MES * FRACAO_DIAS_FDS;
+  const horasSemana = Number(equip.horasSemana) || 0;
+  const horasFds = (equip.horasFimSemana === undefined || equip.horasFimSemana === null)
+    ? horasSemana
+    : Number(equip.horasFimSemana);
+  const potencia = Number(equip.potencia) || 0;
+  const quantidade = Number(equip.quantidade) || 0;
+  const consumoWh = potencia * quantidade * (horasSemana * diasSemana + horasFds * diasFds);
+  return consumoWh / 1000;
+}
+
+function calcularConsumoTotal(imovel) {
+  return imovel.equipamentos.reduce((acc, e) => acc + calcularConsumoEquipamento(e), 0);
+}
+
+function calcularCusto(consumoTotalKwh, tarifa) {
+  return consumoTotalKwh * (Number(tarifa) || 0);
+}
+
+function validarPotencia(v) {
+  const n = Number(v);
+  return v !== '' && v !== null && v !== undefined && !isNaN(n) && n > 0;
+}
+
+function validarHoras(v) {
+  const n = Number(v);
+  return v !== '' && v !== null && v !== undefined && !isNaN(n) && n >= 0 && n <= 24;
+}
+
+function validarQuantidade(v) {
+  const n = Number(v);
+  return v !== '' && v !== null && v !== undefined && Number.isInteger(n) && n > 0;
+}
+
+function validarTexto(v) {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+function validarSenha(v) {
+  return typeof v === 'string' && v.length >= 8;
+}
+
+function validarTarifa(v) {
+  const n = Number(v);
+  return v !== '' && v !== null && v !== undefined && !isNaN(n) && n > 0;
+}
+
+function validarEmailFormato(v) {
+  return typeof v === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+}
+
+function agruparConsumoPorCategoria(imovel) {
+  const mapa = {};
+  imovel.equipamentos.forEach(e => {
+    const consumo = calcularConsumoEquipamento(e);
+    mapa[e.categoria] = (mapa[e.categoria] || 0) + consumo;
+  });
+  return mapa;
+}
+
+function compararCenarios(imovelA, imovelB) {
+  const totalA = calcularConsumoTotal(imovelA);
+  const totalB = calcularConsumoTotal(imovelB);
+  const diffKwh = totalB - totalA;
+  const diffPercentual = totalA === 0 ? null : (diffKwh / totalA) * 100;
+  return { totalA, totalB, diffKwh, diffPercentual };
+}
+
+function sugerirReducao(imovel, limite) {
+  const total = calcularConsumoTotal(imovel);
+  const limiteNum = Number(limite) || 0;
+  if (!limiteNum || total <= limiteNum) {
+    return { excedeu: false, total, sugestoes: [] };
+  }
+  const comConsumo = imovel.equipamentos
+    .map(e => ({ ...e, consumo: calcularConsumoEquipamento(e) }))
+    .sort((a, b) => b.consumo - a.consumo);
+  const sugestoes = [];
+  if (comConsumo[0]) {
+    const top = comConsumo[0];
+    sugestoes.push(`Reduza o tempo de uso de "${top.nome}", responsável por ${top.consumo.toFixed(1)} kWh/mês.`);
+    sugestoes.push(`Avalie substituir "${top.nome}" por um modelo mais eficiente.`);
+  }
+  sugestoes.push('Concentre o uso de equipamentos de maior potência fora do horário de pico.');
+  return { excedeu: true, total, sugestoes };
+}
+
+function categoriaEmUso(nomeCategoria) {
+  return estado.imoveis.some(im => im.equipamentos.some(e => e.categoria === nomeCategoria));
+}
+
+function nomeCategoriaDuplicado(nome, ignorarId) {
+  const alvo = nome.trim().toLowerCase();
+  return estado.categorias.some(c => c.id !== ignorarId && c.nome.trim().toLowerCase() === alvo);
+}
+
+async function hashSenha(senha) {
+  // usa SHA-256 (Web Crypto) quando disponível — exige contexto seguro (https/localhost).
+  if (window.crypto && window.crypto.subtle) {
+    try {
+      const dados = new TextEncoder().encode(senha);
+      const buffer = await crypto.subtle.digest('SHA-256', dados);
+      return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (erro) { /* cai no fallback abaixo */ }
+  }
+  // fallback simples (não criptográfico) para contextos sem Web Crypto (ex.: abrir o arquivo via file://).
+  let h = 0;
+  for (let i = 0; i < senha.length; i++) { h = (Math.imul(31, h) + senha.charCodeAt(i)) | 0; }
+  return 'fb' + (h >>> 0).toString(16);
+}
+
+function formatarMoeda(v) {
+  return 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* =========================================================================
+   TOASTS
+   ========================================================================= */
+function mostrarToast(mensagem, tipo) {
+  const caixa = document.getElementById('caixa-toasts');
+  const toast = document.createElement('div');
+  toast.className = 'toast' + (tipo ? ' ' + tipo : '');
+  toast.textContent = mensagem;
+  caixa.appendChild(toast);
+  setTimeout(() => { toast.remove(); }, 3800);
+}
+
+function mostrarErroCampo(idElemento, mensagem) {
+  const el = document.getElementById(idElemento);
+  if (!el) return;
+  el.textContent = mensagem || '';
+  el.style.display = mensagem ? 'block' : 'none';
+}
+
+/* =========================================================================
+   AUTENTICAÇÃO (US07 / US16)
+   ========================================================================= */
+
+document.querySelectorAll('[data-aba-auth]').forEach(botao => {
+  botao.addEventListener('click', () => {
+    document.querySelectorAll('[data-aba-auth]').forEach(b => b.classList.remove('ativa'));
+    botao.classList.add('ativa');
+    document.getElementById('form-entrar').classList.add('hidden');
+    document.getElementById('form-criar').classList.add('hidden');
+    document.getElementById('painel-esqueci').classList.add('hidden');
+    const alvo = botao.dataset.abaAuth;
+    if (alvo === 'entrar') document.getElementById('form-entrar').classList.remove('hidden');
+    if (alvo === 'criar') document.getElementById('form-criar').classList.remove('hidden');
+    if (alvo === 'esqueci') document.getElementById('painel-esqueci').classList.remove('hidden');
+  });
+});
+
+document.getElementById('form-entrar').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  mostrarErroCampo('erro-entrar', '');
+  const email = document.getElementById('entrar-email').value.trim().toLowerCase();
+  const senha = document.getElementById('entrar-senha').value;
+  const usuario = estado.usuarios[email];
+  if (!usuario) { mostrarErroCampo('erro-entrar', 'E-mail ou senha inválidos.'); return; }
+  const hash = await hashSenha(senha);
+  if (hash !== usuario.passwordHash) { mostrarErroCampo('erro-entrar', 'E-mail ou senha inválidos.'); return; }
+  sessao = { email, convidado: false };
+  entrarNoApp();
+});
+
+document.getElementById('btn-convidado').addEventListener('click', () => {
+  sessao = { email: 'convidado (dados salvos localmente)', convidado: true };
+  entrarNoApp();
+});
+
+document.getElementById('form-criar').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  mostrarErroCampo('erro-criar-email', '');
+  mostrarErroCampo('erro-criar-senha', '');
+  const email = document.getElementById('criar-email').value.trim().toLowerCase();
+  const senha = document.getElementById('criar-senha').value;
+  let valido = true;
+  if (!validarEmailFormato(email)) { mostrarErroCampo('erro-criar-email', 'Informe um e-mail válido.'); valido = false; }
+  else if (estado.usuarios[email]) { mostrarErroCampo('erro-criar-email', 'Este e-mail já está cadastrado.'); valido = false; }
+  if (!validarSenha(senha)) { mostrarErroCampo('erro-criar-senha', 'A senha deve ter ao menos 8 caracteres.'); valido = false; }
+  if (!valido) return;
+  const passwordHash = await hashSenha(senha);
+  estado.usuarios[email] = { email, passwordHash };
+  await salvarEstado();
+  mostrarToast('Conta criada com sucesso. Você já pode entrar.', 'sucesso');
+  document.querySelector('[data-aba-auth="entrar"]').click();
+  document.getElementById('entrar-email').value = email;
+  document.getElementById('form-criar').reset();
+});
+
+document.getElementById('form-esqueci-email').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  mostrarErroCampo('erro-esqueci-email', '');
+  const email = document.getElementById('esqueci-email').value.trim().toLowerCase();
+  const usuario = estado.usuarios[email];
+  if (!usuario) { mostrarErroCampo('erro-esqueci-email', 'Não encontramos uma conta com este e-mail.'); return; }
+  const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+  usuario.resetCode = codigo;
+  usuario.resetExpiry = Date.now() + 15 * 60 * 1000; // 15 minutos
+  salvarEstado();
+  document.getElementById('form-esqueci-nova').classList.remove('hidden');
+  mostrarToast('Código de redefinição (simulado): ' + codigo, 'sucesso');
+});
+
+document.getElementById('form-esqueci-nova').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  mostrarErroCampo('erro-esqueci-nova', '');
+  const email = document.getElementById('esqueci-email').value.trim().toLowerCase();
+  const usuario = estado.usuarios[email];
+  const codigo = document.getElementById('esqueci-codigo').value.trim();
+  const novaSenha = document.getElementById('esqueci-nova-senha').value;
+  const confirmaSenha = document.getElementById('esqueci-confirma-senha').value;
+  if (!usuario || !usuario.resetCode || usuario.resetCode !== codigo || Date.now() > usuario.resetExpiry) {
+    mostrarErroCampo('erro-esqueci-nova', 'Código inválido ou expirado. Gere um novo código.');
+    return;
+  }
+  if (!validarSenha(novaSenha)) { mostrarErroCampo('erro-esqueci-nova', 'A nova senha deve ter ao menos 8 caracteres.'); return; }
+  if (novaSenha !== confirmaSenha) { mostrarErroCampo('erro-esqueci-nova', 'As senhas não coincidem.'); return; }
+  usuario.passwordHash = await hashSenha(novaSenha);
+  delete usuario.resetCode;
+  delete usuario.resetExpiry;
+  await salvarEstado();
+  mostrarToast('Senha redefinida com sucesso. Você já pode entrar.', 'sucesso');
+  document.getElementById('form-esqueci-nova').classList.add('hidden');
+  document.getElementById('form-esqueci-nova').reset();
+  document.getElementById('form-esqueci-email').reset();
+  document.querySelector('[data-aba-auth="entrar"]').click();
+});
+
+document.getElementById('btn-sair').addEventListener('click', () => {
+  sessao = null;
+  idImovelAtual = null;
+  document.getElementById('tela-app').classList.add('hidden');
+  document.getElementById('tela-auth').classList.remove('hidden');
+});
+
+function entrarNoApp() {
+  document.getElementById('tela-auth').classList.add('hidden');
+  document.getElementById('tela-app').classList.remove('hidden');
+  document.getElementById('rotulo-usuario').textContent = sessao.email;
+  mostrarVista('dashboard');
+}
+
+/* =========================================================================
+   NAVEGAÇÃO PRINCIPAL
+   ========================================================================= */
+
+document.querySelectorAll('.item-nav').forEach(botao => {
+  botao.addEventListener('click', () => mostrarVista(botao.dataset.vista));
+});
+
+function mostrarVista(nome) {
+  document.querySelectorAll('.item-nav').forEach(b => b.classList.toggle('ativo', b.dataset.vista === nome));
+  document.querySelectorAll('.vista').forEach(v => v.classList.add('hidden'));
+  document.getElementById('vista-' + nome).classList.remove('hidden');
+  if (nome === 'dashboard') renderizarDashboard();
+  if (nome === 'categorias') renderizarCategorias();
+  if (nome === 'comparar') renderizarComparar();
+  if (nome === 'testes') { /* aguarda clique em executar */ }
+}
+
+/* =========================================================================
+   DASHBOARD — MEUS IMÓVEIS (US06)
+   ========================================================================= */
+
+function renderizarDashboard() {
+  const grade = document.getElementById('grade-imoveis');
+  grade.innerHTML = '';
+  estado.imoveis.forEach(im => {
+    const total = calcularConsumoTotal(im);
+    const cartao = document.createElement('div');
+    cartao.className = 'cartao-imovel';
+    cartao.innerHTML = `
+      <h3>${escapeHtml(im.nome)}</h3>
+      <div class="endereco">${escapeHtml(im.endereco)}</div>
+      <div class="consumo-mini">${total.toFixed(1)} kWh/mês</div>
+      <div class="acoes">
+        <button class="btn btn-pequeno btn-abrir">Abrir</button>
+        <button class="btn btn-pequeno btn-perigo btn-remover">Excluir</button>
+      </div>`;
+    cartao.querySelector('.btn-abrir').addEventListener('click', () => abrirImovel(im.id));
+    cartao.querySelector('.btn-remover').addEventListener('click', () => confirmarExclusaoImovel(im.id));
+    grade.appendChild(cartao);
+  });
+  const cartaoNovo = document.createElement('button');
+  cartaoNovo.className = 'cartao-novo';
+  cartaoNovo.textContent = '+ Novo imóvel';
+  cartaoNovo.addEventListener('click', criarNovoImovel);
+  grade.appendChild(cartaoNovo);
+}
+
+function confirmarExclusaoImovel(id) {
+  const im = estado.imoveis.find(i => i.id === id);
+  if (!im) return;
+  if (!confirm(`Excluir o imóvel "${im.nome}"? Esta ação não pode ser desfeita.`)) return;
+  estado.imoveis = estado.imoveis.filter(i => i.id !== id);
+  salvarEstado();
+  renderizarDashboard();
+  mostrarToast('Imóvel excluído.', 'sucesso');
+}
+
+function criarNovoImovel() {
+  idImovelAtual = null;
+  document.getElementById('titulo-imovel').textContent = 'Novo imóvel';
+  document.getElementById('input-nome-imovel').value = '';
+  document.getElementById('input-endereco-imovel').value = '';
+  mostrarErroCampo('erro-nome-imovel', '');
+  mostrarErroCampo('erro-endereco-imovel', '');
+  document.getElementById('btn-excluir-imovel').classList.add('hidden');
+  document.querySelectorAll('[data-aba-imovel]').forEach(b => { if (b.dataset.abaImovel !== 'dados') b.disabled = true; });
+  abrirAbaImovel('dados');
+  mostrarVistaImovel();
+}
+
+function abrirImovel(id) {
+  idImovelAtual = id;
+  const im = estado.imoveis.find(i => i.id === id);
+  document.getElementById('titulo-imovel').textContent = im.nome;
+  document.getElementById('input-nome-imovel').value = im.nome;
+  document.getElementById('input-endereco-imovel').value = im.endereco;
+  document.getElementById('btn-excluir-imovel').classList.remove('hidden');
+  document.querySelectorAll('[data-aba-imovel]').forEach(b => { b.disabled = false; });
+  document.getElementById('input-tarifa').value = im.tarifa || '';
+  document.getElementById('input-limite').value = im.limiteConsumo || '';
+  abrirAbaImovel('dados');
+  mostrarVistaImovel();
+  renderizarEquipamentos();
+}
+
+function mostrarVistaImovel() {
+  document.querySelectorAll('.vista').forEach(v => v.classList.add('hidden'));
+  document.getElementById('vista-imovel').classList.remove('hidden');
+  document.querySelectorAll('.item-nav').forEach(b => b.classList.remove('ativo'));
+}
+
+document.getElementById('btn-voltar-dashboard').addEventListener('click', () => mostrarVista('dashboard'));
+
+/* ---------- abas dentro do imóvel ---------- */
+document.querySelectorAll('[data-aba-imovel]').forEach(botao => {
+  botao.addEventListener('click', () => { if (!botao.disabled) abrirAbaImovel(botao.dataset.abaImovel); });
+});
+
+function abrirAbaImovel(nome) {
+  abaImovelAtual = nome;
+  document.querySelectorAll('[data-aba-imovel]').forEach(b => b.classList.toggle('ativa', b.dataset.abaImovel === nome));
+  document.querySelectorAll('.aba-imovel-conteudo').forEach(el => el.classList.add('hidden'));
+  document.getElementById('aba-' + nome).classList.remove('hidden');
+  if (nome === 'equipamentos') renderizarEquipamentos();
+  if (nome === 'relatorio') renderizarRelatorio();
+}
+
+function escapeHtml(texto) {
+  const div = document.createElement('div');
+  div.textContent = texto == null ? '' : String(texto);
+  return div.innerHTML;
+}
+
+/* =========================================================================
+   ABA "DADOS DO IMÓVEL" (US01)
+   ========================================================================= */
+
+document.getElementById('btn-salvar-imovel').addEventListener('click', async () => {
+  const nome = document.getElementById('input-nome-imovel').value;
+  const endereco = document.getElementById('input-endereco-imovel').value;
+  let valido = true;
+  if (!validarTexto(nome)) { mostrarErroCampo('erro-nome-imovel', 'Informe o nome do imóvel.'); valido = false; }
+  else mostrarErroCampo('erro-nome-imovel', '');
+  if (!validarTexto(endereco)) { mostrarErroCampo('erro-endereco-imovel', 'Informe o endereço.'); valido = false; }
+  else mostrarErroCampo('erro-endereco-imovel', '');
+  if (!valido) return;
+
+  if (idImovelAtual) {
+    const im = estado.imoveis.find(i => i.id === idImovelAtual);
+    im.nome = nome.trim();
+    im.endereco = endereco.trim();
+  } else {
+    const novo = {
+      id: gerarId(),
+      nome: nome.trim(),
+      endereco: endereco.trim(),
+      tarifa: null,
+      limiteConsumo: null,
+      equipamentos: []
+    };
+    estado.imoveis.push(novo);
+    idImovelAtual = novo.id;
+  }
+  await salvarEstado();
+  mostrarToast('Imóvel salvo com sucesso.', 'sucesso');
+  document.getElementById('titulo-imovel').textContent = nome.trim();
+  document.getElementById('btn-excluir-imovel').classList.remove('hidden');
+  document.querySelectorAll('[data-aba-imovel]').forEach(b => { b.disabled = false; });
+});
+
+document.getElementById('btn-excluir-imovel').addEventListener('click', () => {
+  if (!idImovelAtual) return;
+  confirmarExclusaoImovel(idImovelAtual);
+  idImovelAtual = null;
+  mostrarVista('dashboard');
+});
+
+/* =========================================================================
+   ABA "EQUIPAMENTOS" (US02, US03, US12, US17)
+   ========================================================================= */
+
+function popularSelectCategorias(selectEl) {
+  selectEl.innerHTML = '';
+  if (estado.categorias.length === 0) {
+    const opt = document.createElement('option');
+    opt.textContent = 'Cadastre uma categoria primeiro';
+    opt.disabled = true;
+    opt.selected = true;
+    selectEl.appendChild(opt);
+    return;
+  }
+  estado.categorias.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.nome;
+    opt.textContent = c.nome;
+    selectEl.appendChild(opt);
+  });
+}
+
+function popularDatalistReferencia() {
+  const dl = document.getElementById('lista-equip-referencia');
+  dl.innerHTML = '';
+  estado.equipReferencia.forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e.nome;
+    dl.appendChild(opt);
+  });
+}
+
+document.getElementById('equip-nome').addEventListener('change', (ev) => {
+  const nomeDigitado = ev.target.value.trim().toLowerCase();
+  const referencia = estado.equipReferencia.find(e => e.nome.toLowerCase() === nomeDigitado);
+  if (referencia) {
+    document.getElementById('equip-potencia').value = referencia.potencia;
+    const selectCategoria = document.getElementById('equip-categoria');
+    if ([...selectCategoria.options].some(o => o.value === referencia.categoria)) {
+      selectCategoria.value = referencia.categoria;
+    }
+  }
+});
+
+document.getElementById('equip-mesmo-fds').addEventListener('change', (ev) => {
+  document.getElementById('equip-horas-fds').disabled = ev.target.checked;
+  if (ev.target.checked) {
+    document.getElementById('equip-horas-fds').value = document.getElementById('equip-horas-semana').value;
+  }
+});
+document.getElementById('equip-mesmo-fds').dispatchEvent(new Event('change'));
+
+document.getElementById('equip-horas-semana').addEventListener('input', (ev) => {
+  if (document.getElementById('equip-mesmo-fds').checked) {
+    document.getElementById('equip-horas-fds').value = ev.target.value;
+  }
+});
+
+document.getElementById('btn-add-equipamento').addEventListener('click', async () => {
+  const nome = document.getElementById('equip-nome').value;
+  const categoria = document.getElementById('equip-categoria').value;
+  const potencia = document.getElementById('equip-potencia').value;
+  const quantidade = document.getElementById('equip-quantidade').value;
+  const horasSemana = document.getElementById('equip-horas-semana').value;
+  const mesmoFds = document.getElementById('equip-mesmo-fds').checked;
+  const horasFds = mesmoFds ? horasSemana : document.getElementById('equip-horas-fds').value;
+
+  let erro = '';
+  if (!validarTexto(nome)) erro = 'Informe o nome do equipamento.';
+  else if (!categoria || estado.categorias.length === 0) erro = 'Selecione uma categoria (cadastre uma em "Categorias" se necessário).';
+  else if (!validarPotencia(potencia)) erro = 'A potência deve ser um número maior que zero.';
+  else if (!validarQuantidade(quantidade)) erro = 'A quantidade deve ser um número inteiro maior que zero.';
+  else if (!validarHoras(horasSemana)) erro = 'As horas de uso (semana) devem estar entre 0 e 24.';
+  else if (!validarHoras(horasFds)) erro = 'As horas de uso (fim de semana) devem estar entre 0 e 24.';
+
+  if (erro) { mostrarErroCampo('erro-equipamento', erro); return; }
+  mostrarErroCampo('erro-equipamento', '');
+
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  im.equipamentos.push({
+    id: gerarId(),
+    nome: nome.trim(),
+    categoria,
+    potencia: Number(potencia),
+    quantidade: Number(quantidade),
+    horasSemana: Number(horasSemana),
+    horasFimSemana: Number(horasFds)
+  });
+  await salvarEstado();
+  document.getElementById('equip-nome').value = '';
+  document.getElementById('equip-potencia').value = '';
+  document.getElementById('equip-quantidade').value = 1;
+  document.getElementById('equip-horas-semana').value = 0;
+  document.getElementById('equip-horas-fds').value = 0;
+  renderizarEquipamentos();
+  mostrarToast('Equipamento adicionado.', 'sucesso');
+});
+
+function renderizarEquipamentos() {
+  if (!idImovelAtual) return;
+  popularSelectCategorias(document.getElementById('equip-categoria'));
+  popularDatalistReferencia();
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  const corpo = document.getElementById('corpo-tabela-equipamentos');
+  corpo.innerHTML = '';
+  im.equipamentos.forEach(e => {
+    const consumo = calcularConsumoEquipamento(e);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(e.nome)}</td>
+      <td>${escapeHtml(e.categoria)}</td>
+      <td class="num">${e.potencia}</td>
+      <td class="num">${e.quantidade}</td>
+      <td class="num">${e.horasSemana}</td>
+      <td class="num">${e.horasFimSemana}</td>
+      <td class="num">${consumo.toFixed(2)}</td>
+      <td><button class="btn btn-pequeno btn-perigo">Remover</button></td>`;
+    tr.querySelector('button').addEventListener('click', async () => {
+      im.equipamentos = im.equipamentos.filter(x => x.id !== e.id);
+      await salvarEstado();
+      renderizarEquipamentos();
+    });
+    corpo.appendChild(tr);
+  });
+  document.getElementById('vazio-equipamentos').classList.toggle('hidden', im.equipamentos.length > 0);
+}
+
+/* =========================================================================
+   ABA "RELATÓRIO" (US04, US05, US08, US09, US10, US14)
+   ========================================================================= */
+
+document.getElementById('input-tarifa').addEventListener('change', async (ev) => {
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  if (!im) return;
+  const valor = ev.target.value;
+  mostrarErroCampo('erro-tarifa', '');
+  if (valor !== '' && !validarTarifa(valor)) {
+    mostrarErroCampo('erro-tarifa', 'A tarifa deve ser um número maior que zero.');
+    return;
+  }
+  im.tarifa = valor === '' ? null : Number(valor);
+  await salvarEstado();
+  renderizarRelatorio();
+});
+
+document.getElementById('input-limite').addEventListener('change', async (ev) => {
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  if (!im) return;
+  im.limiteConsumo = ev.target.value === '' ? null : Number(ev.target.value);
+  await salvarEstado();
+  renderizarRelatorio();
+});
+
+function renderizarRelatorio() {
+  if (!idImovelAtual) return;
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  const total = calcularConsumoTotal(im);
+
+  document.getElementById('relatorio-nome-endereco').textContent = `${im.nome} — ${im.endereco}`;
+  document.getElementById('relatorio-consumo-total').innerHTML = total.toFixed(1) + '<span>kWh/mês</span>';
+
+  const custo = calcularCusto(total, im.tarifa || 0);
+  document.getElementById('relatorio-custo').textContent = formatarMoeda(custo);
+
+  const selo = document.getElementById('relatorio-status-limite');
+  const listaSugestoes = document.getElementById('relatorio-sugestoes');
+  if (im.limiteConsumo) {
+    const resultado = sugerirReducao(im, im.limiteConsumo);
+    selo.classList.remove('hidden');
+    if (resultado.excedeu) {
+      selo.textContent = 'Acima do limite definido';
+      selo.className = 'status-limite excedido';
+      listaSugestoes.innerHTML = resultado.sugestoes.map(s => `<li>${escapeHtml(s)}</li>`).join('');
+      listaSugestoes.classList.remove('hidden');
+    } else {
+      selo.textContent = 'Dentro do limite definido';
+      selo.className = 'status-limite ok';
+      listaSugestoes.classList.add('hidden');
+    }
+  } else {
+    selo.classList.add('hidden');
+    listaSugestoes.classList.add('hidden');
+  }
+
+  const corpo = document.getElementById('corpo-tabela-relatorio');
+  corpo.innerHTML = '';
+  im.equipamentos.forEach(e => {
+    const consumo = calcularConsumoEquipamento(e);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${escapeHtml(e.nome)}</td><td>${escapeHtml(e.categoria)}</td><td class="num">${consumo.toFixed(2)}</td>`;
+    corpo.appendChild(tr);
+  });
+
+  renderizarGraficoPizza(im);
+}
+
+function renderizarGraficoPizza(im) {
+  const canvas = document.getElementById('grafico-pizza');
+  if (typeof Chart === 'undefined') {
+    canvas.parentElement.innerHTML = '<p style="color:var(--text-muted);padding:20px;">Não foi possível carregar a biblioteca de gráficos (verifique a conexão com a internet).</p>';
+    return;
+  }
+  const agrupado = agruparConsumoPorCategoria(im);
+  const categorias = Object.keys(agrupado);
+  const valores = Object.values(agrupado);
+  if (graficoPizzaInstancia) { graficoPizzaInstancia.destroy(); }
+  if (categorias.length === 0) return;
+  const paleta = ['#f5a623', '#4e9f6e', '#5b8def', '#e1523d', '#9b6bd6', '#3fb5c9', '#d9a441', '#7a8fa6', '#c9576a', '#6cbf6c'];
+  graficoPizzaInstancia = new Chart(canvas, {
+    type: 'pie',
+    data: {
+      labels: categorias,
+      datasets: [{ data: valores, backgroundColor: categorias.map((_, i) => paleta[i % paleta.length]) }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { color: '#edeff2' } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const totalValores = valores.reduce((a, b) => a + b, 0);
+              const pct = totalValores ? (ctx.parsed / totalValores * 100).toFixed(1) : '0';
+              return `${ctx.label}: ${ctx.parsed.toFixed(1)} kWh (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+document.getElementById('btn-exportar-csv').addEventListener('click', () => {
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  if (!im) return;
+  const linhas = [['Imóvel', im.nome], ['Endereço', im.endereco], [], ['Equipamento', 'Categoria', 'Consumo (kWh/mês)']];
+  im.equipamentos.forEach(e => linhas.push([e.nome, e.categoria, calcularConsumoEquipamento(e).toFixed(2)]));
+  linhas.push([]);
+  linhas.push(['Consumo total (kWh/mês)', calcularConsumoTotal(im).toFixed(2)]);
+  if (im.tarifa) linhas.push(['Custo estimado', formatarMoeda(calcularCusto(calcularConsumoTotal(im), im.tarifa))]);
+  const csv = linhas.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `relatorio_${im.nome.replace(/\s+/g, '_')}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+
+document.getElementById('btn-exportar-pdf').addEventListener('click', () => {
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  if (!im) return;
+  if (typeof window.jspdf === 'undefined') {
+    mostrarToast('Não foi possível carregar a biblioteca de PDF (verifique a conexão com a internet).', 'erro');
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  let y = 18;
+  doc.setFontSize(16); doc.text('Relatório de consumo energético', 14, y); y += 10;
+  doc.setFontSize(11);
+  doc.text(`Imóvel: ${im.nome}`, 14, y); y += 7;
+  doc.text(`Endereço: ${im.endereco}`, 14, y); y += 10;
+  doc.setFontSize(12); doc.text('Equipamentos:', 14, y); y += 7;
+  doc.setFontSize(10);
+  im.equipamentos.forEach(e => {
+    const consumo = calcularConsumoEquipamento(e).toFixed(2);
+    doc.text(`${e.nome} (${e.categoria}) — ${consumo} kWh/mês`, 16, y);
+    y += 6;
+    if (y > 275) { doc.addPage(); y = 18; }
+  });
+  y += 6;
+  const total = calcularConsumoTotal(im);
+  doc.setFontSize(12);
+  doc.text(`Consumo total: ${total.toFixed(2)} kWh/mês`, 14, y); y += 7;
+  if (im.tarifa) { doc.text(`Custo estimado: ${formatarMoeda(calcularCusto(total, im.tarifa))}`, 14, y); y += 7; }
+  doc.save(`relatorio_${im.nome.replace(/\s+/g, '_')}.pdf`);
+});
+
+/* =========================================================================
+   ABA "IMPORTAR PLANILHA" (US11)
+   ========================================================================= */
+
+function localizarValorColuna(linhaObjeto, possiveisNomes) {
+  const chaves = Object.keys(linhaObjeto);
+  for (const nomeAlvo of possiveisNomes) {
+    const chave = chaves.find(k => k.trim().toLowerCase() === nomeAlvo);
+    if (chave !== undefined) return linhaObjeto[chave];
+  }
+  return undefined;
+}
+
+function validarEProcessarLinhas(linhasBrutas) {
+  const validas = [];
+  const invalidas = [];
+  linhasBrutas.forEach((linha, indice) => {
+    const numeroLinha = indice + 2; // +1 cabeçalho, +1 base 1
+    const nome = localizarValorColuna(linha, ['nome']);
+    const categoria = localizarValorColuna(linha, ['categoria']);
+    const potenciaBruta = localizarValorColuna(linha, ['potencia', 'potência', 'potencia (w)', 'potência (w)']);
+    const motivos = [];
+    if (!validarTexto(nome)) motivos.push('nome ausente');
+    if (!validarTexto(categoria)) motivos.push('categoria ausente');
+    if (!validarPotencia(potenciaBruta)) motivos.push('potência inválida (deve ser numérica e maior que zero)');
+    if (motivos.length > 0) {
+      invalidas.push({ numeroLinha, motivos });
+    } else {
+      validas.push({ nome: String(nome).trim(), categoria: String(categoria).trim(), potencia: Number(potenciaBruta) });
+    }
+  });
+  return { validas, invalidas };
+}
+
+document.getElementById('input-arquivo-planilha').addEventListener('change', (ev) => {
+  const arquivo = ev.target.files[0];
+  arquivoImportadoLinhas = null;
+  document.getElementById('btn-confirmar-importacao').classList.add('hidden');
+  document.getElementById('resultado-importacao').innerHTML = '';
+  if (!arquivo) return;
+  const extensao = arquivo.name.split('.').pop().toLowerCase();
+
+  const processar = (linhasObjeto) => {
+    const { validas, invalidas } = validarEProcessarLinhas(linhasObjeto);
+    arquivoImportadoLinhas = validas;
+    exibirResultadoImportacao(validas, invalidas);
+  };
+
+  if (extensao === 'csv') {
+    if (typeof Papa === 'undefined') { mostrarToast('Biblioteca de leitura de CSV indisponível (verifique a conexão).', 'erro'); return; }
+    Papa.parse(arquivo, { header: true, skipEmptyLines: true, complete: (res) => processar(res.data) });
+  } else if (extensao === 'xlsx' || extensao === 'xls') {
+    if (typeof XLSX === 'undefined') { mostrarToast('Biblioteca de leitura de planilhas indisponível (verifique a conexão).', 'erro'); return; }
+    const leitor = new FileReader();
+    leitor.onload = (e) => {
+      const workbook = XLSX.read(e.target.result, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhasObjeto = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+      processar(linhasObjeto);
+    };
+    leitor.readAsArrayBuffer(arquivo);
+  } else {
+    mostrarToast('Formato não suportado. Envie um arquivo CSV ou XLSX.', 'erro');
+  }
+});
+
+function exibirResultadoImportacao(validas, invalidas) {
+  const container = document.getElementById('resultado-importacao');
+  let html = `<p class="linha-valida">${validas.length} linha(s) válida(s) pronta(s) para importação.</p>`;
+  if (invalidas.length > 0) {
+    html += `<p class="linha-invalida">${invalidas.length} linha(s) inválida(s):</p><ul>`;
+    invalidas.forEach(i => { html += `<li class="linha-invalida">Linha ${i.numeroLinha}: ${i.motivos.join(', ')}.</li>`; });
+    html += '</ul>';
+  }
+  container.innerHTML = html;
+  document.getElementById('btn-confirmar-importacao').classList.toggle('hidden', validas.length === 0);
+}
+
+document.getElementById('btn-confirmar-importacao').addEventListener('click', async () => {
+  if (!arquivoImportadoLinhas || !idImovelAtual) return;
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  const categoriasExistentes = new Set(estado.categorias.map(c => c.nome.toLowerCase()));
+  arquivoImportadoLinhas.forEach(linha => {
+    if (!categoriasExistentes.has(linha.categoria.toLowerCase())) {
+      estado.categorias.push({ id: gerarId(), nome: linha.categoria });
+      categoriasExistentes.add(linha.categoria.toLowerCase());
+    }
+    im.equipamentos.push({
+      id: gerarId(), nome: linha.nome, categoria: linha.categoria, potencia: linha.potencia,
+      quantidade: 1, horasSemana: 0, horasFimSemana: 0
+    });
+  });
+  await salvarEstado();
+  mostrarToast(`${arquivoImportadoLinhas.length} equipamento(s) importado(s).`, 'sucesso');
+  arquivoImportadoLinhas = null;
+  document.getElementById('resultado-importacao').innerHTML = '';
+  document.getElementById('btn-confirmar-importacao').classList.add('hidden');
+  document.getElementById('input-arquivo-planilha').value = '';
+  abrirAbaImovel('equipamentos');
+});
+
+/* =========================================================================
+   CATEGORIAS (US13)
+   ========================================================================= */
+
+document.getElementById('btn-add-categoria').addEventListener('click', async () => {
+  const input = document.getElementById('input-nova-categoria');
+  const nome = input.value.trim();
+  mostrarErroCampo('erro-categoria', '');
+  if (!validarTexto(nome)) { mostrarErroCampo('erro-categoria', 'Informe um nome para a categoria.'); return; }
+  if (nomeCategoriaDuplicado(nome)) { mostrarErroCampo('erro-categoria', 'Já existe uma categoria com esse nome.'); return; }
+  estado.categorias.push({ id: gerarId(), nome });
+  await salvarEstado();
+  input.value = '';
+  renderizarCategorias();
+  mostrarToast('Categoria adicionada.', 'sucesso');
+});
+
+function renderizarCategorias() {
+  const corpo = document.getElementById('corpo-tabela-categorias');
+  corpo.innerHTML = '';
+  estado.categorias.forEach(c => {
+    const tr = document.createElement('tr');
+    const emUso = categoriaEmUso(c.nome);
+    tr.innerHTML = `
+      <td><input type="text" value="${escapeHtml(c.nome)}" class="input-renomear" style="background:transparent;border:1px solid transparent;color:inherit;padding:4px;width:100%;"></td>
+      <td style="text-align:right;white-space:nowrap;">
+        <button class="btn btn-pequeno btn-salvar-nome">Salvar</button>
+        <button class="btn btn-pequeno btn-perigo btn-excluir-categoria" ${emUso ? 'disabled title="Categoria em uso por equipamentos"' : ''}>Excluir</button>
+      </td>`;
+    const inputRenomear = tr.querySelector('.input-renomear');
+    tr.querySelector('.btn-salvar-nome').addEventListener('click', async () => {
+      const novoNome = inputRenomear.value.trim();
+      if (!validarTexto(novoNome)) { mostrarToast('Informe um nome válido.', 'erro'); return; }
+      if (nomeCategoriaDuplicado(novoNome, c.id)) { mostrarToast('Já existe uma categoria com esse nome.', 'erro'); return; }
+      const nomeAntigo = c.nome;
+      c.nome = novoNome;
+      estado.imoveis.forEach(im => im.equipamentos.forEach(e => { if (e.categoria === nomeAntigo) e.categoria = novoNome; }));
+      await salvarEstado();
+      renderizarCategorias();
+      mostrarToast('Categoria atualizada.', 'sucesso');
+    });
+    const botaoExcluir = tr.querySelector('.btn-excluir-categoria');
+    if (!emUso) {
+      botaoExcluir.addEventListener('click', async () => {
+        if (!confirm(`Excluir a categoria "${c.nome}"?`)) return;
+        estado.categorias = estado.categorias.filter(x => x.id !== c.id);
+        await salvarEstado();
+        renderizarCategorias();
+        mostrarToast('Categoria excluída.', 'sucesso');
+      });
+    }
+    corpo.appendChild(tr);
+  });
+}
+
+/* =========================================================================
+   COMPARAR CENÁRIOS (US15)
+   ========================================================================= */
+
+function renderizarComparar() {
+  const vazio = document.getElementById('comparar-vazio');
+  const conteudo = document.getElementById('comparar-conteudo');
+  if (estado.imoveis.length < 2) {
+    vazio.classList.remove('hidden');
+    conteudo.classList.add('hidden');
+    return;
+  }
+  vazio.classList.add('hidden');
+  conteudo.classList.remove('hidden');
+  const selectA = document.getElementById('select-cenario-a');
+  const selectB = document.getElementById('select-cenario-b');
+  [selectA, selectB].forEach(sel => { sel.innerHTML = estado.imoveis.map(im => `<option value="${im.id}">${escapeHtml(im.nome)}</option>`).join(''); });
+  if (estado.imoveis.length > 1) selectB.selectedIndex = 1;
+  document.getElementById('resultado-comparacao').innerHTML = '';
+}
+
+document.getElementById('btn-comparar').addEventListener('click', () => {
+  const idA = document.getElementById('select-cenario-a').value;
+  const idB = document.getElementById('select-cenario-b').value;
+  if (idA === idB) { mostrarToast('Selecione dois imóveis diferentes.', 'erro'); return; }
+  const imA = estado.imoveis.find(i => i.id === idA);
+  const imB = estado.imoveis.find(i => i.id === idB);
+  const r = compararCenarios(imA, imB);
+  const diffClasse = r.diffKwh > 0 ? 'pos' : (r.diffKwh < 0 ? 'neg' : '');
+  const sinal = r.diffKwh > 0 ? '+' : '';
+  const pctTexto = r.diffPercentual === null ? 'n/d' : `${sinal}${r.diffPercentual.toFixed(1)}%`;
+  document.getElementById('resultado-comparacao').innerHTML = `
+    <div class="painel">
+      <div class="placar">
+        <div><div class="ajuda">${escapeHtml(imA.nome)}</div><div class="num">${r.totalA.toFixed(1)} kWh</div></div>
+        <div><div class="ajuda">${escapeHtml(imB.nome)}</div><div class="num">${r.totalB.toFixed(1)} kWh</div></div>
+        <div><div class="ajuda">Diferença (B − A)</div><div class="num diff ${diffClasse}">${sinal}${r.diffKwh.toFixed(1)} kWh (${pctTexto})</div></div>
+      </div>
+    </div>`;
+});
+
+/* =========================================================================
+   TESTES AUTOMATIZADOS (T04 de cada user story)
+   ========================================================================= */
+
+function afirmarIgual(valorObtido, valorEsperado, tolerancia) {
+  if (tolerancia !== undefined) return Math.abs(valorObtido - valorEsperado) <= tolerancia;
+  return valorObtido === valorEsperado;
+}
+
+function obterCasosDeTeste() {
+  const equipBase = { potencia: 100, quantidade: 2, horasSemana: 5, horasFimSemana: 5 };
+  const consumoBase = calcularConsumoEquipamento(equipBase); // 100*2*5*30/1000 = 30
+  const equipPerfis = { potencia: 100, quantidade: 1, horasSemana: 10, horasFimSemana: 2 };
+  const esperadoPerfis = 23.142857142857142; // (100W × 1 × (10h×21.43 dias + 2h×8.57 dias)) / 1000
+
+  const imovelTeste = {
+    equipamentos: [
+      { nome: 'A', categoria: 'Cozinha', potencia: 1000, quantidade: 1, horasSemana: 1, horasFimSemana: 1 },
+      { nome: 'B', categoria: 'Sala', potencia: 100, quantidade: 1, horasSemana: 1, horasFimSemana: 1 }
+    ]
+  };
+  const agrupado = agruparConsumoPorCategoria(imovelTeste);
+
+  const imA = { equipamentos: [{ potencia: 1000, quantidade: 1, horasSemana: 2, horasFimSemana: 2 }] };
+  const imB = { equipamentos: [{ potencia: 2000, quantidade: 1, horasSemana: 2, horasFimSemana: 2 }] };
+  const comparacao = compararCenarios(imA, imB);
+
+  const imLimite = { equipamentos: [{ nome: 'Chuveiro', potencia: 5000, quantidade: 1, horasSemana: 2, horasFimSemana: 2 }] };
+  const totalImLimite = calcularConsumoTotal(imLimite);
+  const abaixoLimite = sugerirReducao(imLimite, totalImLimite + 100);
+  const acimaLimite = sugerirReducao(imLimite, 1);
+
+  return [
+    { descricao: 'Cálculo de consumo mensal — fórmula (P×Q×H×30)/1000', passou: afirmarIgual(consumoBase, 30, 0.001) },
+    { descricao: 'Cálculo de consumo com perfis distintos (semana/fim de semana)', passou: afirmarIgual(calcularConsumoEquipamento(equipPerfis), esperadoPerfis, 0.001) },
+    { descricao: 'Cálculo de custo mensal (consumo × tarifa)', passou: afirmarIgual(calcularCusto(100, 0.75), 75, 0.001) },
+    { descricao: 'Validação de potência — rejeita zero', passou: validarPotencia(0) === false },
+    { descricao: 'Validação de potência — rejeita negativo', passou: validarPotencia(-10) === false },
+    { descricao: 'Validação de potência — aceita valor positivo', passou: validarPotencia(150) === true },
+    { descricao: 'Validação de horas de uso — rejeita acima de 24h', passou: validarHoras(25) === false },
+    { descricao: 'Validação de horas de uso — rejeita negativo', passou: validarHoras(-1) === false },
+    { descricao: 'Validação de horas de uso — aceita intervalo 0–24h', passou: validarHoras(24) === true && validarHoras(0) === true },
+    { descricao: 'Validação de quantidade — rejeita zero ou negativo', passou: validarQuantidade(0) === false && validarQuantidade(-3) === false },
+    { descricao: 'Validação de quantidade — rejeita valor não inteiro', passou: validarQuantidade(2.5) === false },
+    { descricao: 'Validação de nome/endereço obrigatórios', passou: validarTexto('') === false && validarTexto('  ') === false && validarTexto('Rua A') === true },
+    { descricao: 'Validação de senha — exige mínimo de 8 caracteres', passou: validarSenha('1234567') === false && validarSenha('12345678') === true },
+    { descricao: 'Validação de tarifa — rejeita zero ou negativa', passou: validarTarifa(0) === false && validarTarifa(-1) === false && validarTarifa(0.5) === true },
+    { descricao: 'Validação de formato de e-mail', passou: validarEmailFormato('teste@dominio.com') === true && validarEmailFormato('invalido') === false },
+    { descricao: 'Agrupamento de consumo por categoria — soma correta', passou: afirmarIgual(agrupado['Cozinha'], calcularConsumoEquipamento(imovelTeste.equipamentos[0]), 0.001) },
+    { descricao: 'Comparação de cenários — diferença em kWh e percentual', passou: afirmarIgual(comparacao.diffKwh, calcularConsumoTotal(imB) - calcularConsumoTotal(imA), 0.001) && afirmarIgual(comparacao.diffPercentual, 100, 0.01) },
+    { descricao: 'Sugestão de redução — não aciona alerta dentro do limite', passou: abaixoLimite.excedeu === false },
+    { descricao: 'Sugestão de redução — aciona alerta e sugere ação acima do limite', passou: acimaLimite.excedeu === true && acimaLimite.sugestoes.length > 0 },
+    { descricao: 'Detecção de nome de categoria duplicado (case-insensitive)', passou: (() => {
+        const backup = estado.categorias;
+        estado.categorias = [{ id: 'x', nome: 'Cozinha' }];
+        const r = nomeCategoriaDuplicado('cozinha');
+        estado.categorias = backup;
+        return r === true;
+      })() }
+  ];
+}
+
+document.getElementById('btn-rodar-testes').addEventListener('click', () => {
+  const casos = obterCasosDeTeste();
+  const passaram = casos.filter(c => c.passou).length;
+  document.getElementById('resumo-testes').textContent = `${passaram} / ${casos.length} testes aprovados`;
+  document.getElementById('resumo-testes').style.color = passaram === casos.length ? 'var(--green)' : 'var(--red)';
+  document.getElementById('lista-testes').innerHTML = casos.map(c => `
+    <div class="linha-teste">
+      <span>${escapeHtml(c.descricao)}</span>
+      <span class="selo ${c.passou ? 'passou' : 'falhou'}">${c.passou ? 'PASSOU' : 'FALHOU'}</span>
+    </div>`).join('');
+});
+
+/* =========================================================================
+   INICIALIZAÇÃO
+   ========================================================================= */
+
+async function iniciar() {
+  estado = await carregarEstado();
+  // anima o número de exemplo na tela de login (efeito único, não repetitivo)
+  const heroValor = document.getElementById('hero-valor');
+  let n = 0;
+  const alvo = 247.5;
+  const passo = setInterval(() => {
+    n += alvo / 20;
+    if (n >= alvo) { n = alvo; clearInterval(passo); }
+    heroValor.innerHTML = n.toFixed(1) + '<span>kWh/mês</span>';
+  }, 40);
+}
+
+iniciar();
+</script>
+</body>
+</html>
