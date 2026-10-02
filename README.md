@@ -428,7 +428,7 @@ O script é **seguro para executar mais de uma vez**: serve para banco novo e pa
 No navegador (Chrome, Edge ou Firefox), abra:
 
 ```text
-http://localhost/Dimensionamento_Energetico_SERS/dimensionamento_energetico_residencial.php
+http://localhost/Dimensionamento_Energetico_SERS/dimensionamento_energetico_residencial.php #pode ser que tenha que colocar -main no arquivo da pasta para pesquisar
 ```
 
 Se a tela aparecer sem formatação ou antiga, aperte **Ctrl + F5**.
