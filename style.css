@@ -283,3 +283,69 @@ tr:last-child td{border-bottom:none;}
 @media (prefers-reduced-motion:reduce){
   .toast{animation:none;}
 }
+
+/* =========================================================================
+   CP2 — ABA "SOLAR" (dimensionamento fotovoltaico)
+   ========================================================================= */
+.titulo-bloco{
+  font-family:var(--sans);font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--accent);margin:22px 0 12px 0;padding-bottom:6px;border-bottom:1px solid var(--line-soft);
+}
+.titulo-bloco:first-of-type{margin-top:6px;}
+.campo select:disabled,.campo input:disabled{opacity:.5;cursor:not-allowed;}
+
+/* ---------- avisos ---------- */
+.aviso-academico{
+  background:var(--accent-soft);border:1px solid var(--accent-dim);border-left:4px solid var(--accent);
+  color:var(--text-primary);font-size:13px;padding:10px 14px;border-radius:var(--radius-s);margin:12px 0;
+}
+.aviso-snapshot{
+  background:var(--bg-panel-raised);border:1px solid var(--line);border-left:4px solid #5b8def;
+  font-size:13px;padding:10px 14px;border-radius:var(--radius-s);margin:12px 0;
+}
+.bloqueio-solar{
+  background:var(--red-soft);border:1px solid var(--red);border-left:4px solid var(--red);
+  color:var(--text-primary);font-size:13.5px;padding:10px 14px;border-radius:var(--radius-s);margin:12px 0;
+}
+.bloqueio-solar ul{margin:6px 0 0 0;padding-left:18px;}
+
+/* ---------- proposta ---------- */
+.proposta-fv{margin-bottom:18px;}
+.cabecalho-proposta{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+.cabecalho-proposta h3{margin:0;font-size:18px;}
+.acoes-proposta{display:flex;gap:8px;flex-wrap:wrap;}
+
+.grade-metricas{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin:16px 0;}
+.cartao-metrica{background:#0e131a;border:1px solid var(--line);border-radius:var(--radius-m);padding:14px 16px;}
+.rotulo-metrica{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);}
+.valor-metrica{font-family:var(--mono);font-size:22px;color:var(--accent);font-weight:600;margin-top:4px;line-height:1.2;}
+.valor-metrica span{font-size:12px;color:var(--text-muted);margin-left:5px;font-weight:500;}
+.detalhe-metrica{font-size:12px;color:var(--text-muted);margin-top:3px;}
+
+.lista-detalhes{display:grid;grid-template-columns:minmax(130px,200px) 1fr;gap:8px 16px;margin:16px 0;font-size:13.5px;}
+.lista-detalhes dt{color:var(--text-muted);}
+.lista-detalhes dd{margin:0;word-break:break-word;}
+.lista-detalhes .ajuda{font-size:12px;color:var(--text-muted);}
+
+tr.linha-total td{border-top:1px solid var(--line);background:var(--bg-panel-raised);font-family:var(--mono);}
+tr.linha-total td:first-child{font-family:var(--sans);text-align:right;}
+
+/* ---------- verificações de compatibilidade ---------- */
+.lista-verificacoes{list-style:none;margin:0 0 6px 0;padding:0;font-size:13px;}
+.lista-verificacoes li{display:flex;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line-soft);}
+.marca-ver{font-family:var(--mono);font-size:11px;font-weight:600;padding:1px 8px;border-radius:20px;flex-shrink:0;}
+.lista-verificacoes li.ok .marca-ver{background:var(--green-soft);color:var(--green);}
+.lista-verificacoes li.falha .marca-ver{background:var(--red-soft);color:var(--red);}
+
+/* ---------- alternativas ---------- */
+details.alternativas{margin-top:20px;border:1px solid var(--line);border-radius:var(--radius-m);padding:4px 16px 14px 16px;}
+details.alternativas summary{cursor:pointer;padding:10px 0;font-weight:600;font-size:14px;color:var(--text-primary);}
+details.alternativas summary:hover{color:var(--accent);}
+.selo-uso{display:inline-block;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:600;padding:1px 8px;border-radius:20px;white-space:nowrap;}
+
+@media (max-width:820px){
+  .lista-detalhes{grid-template-columns:1fr;gap:2px;}
+  .lista-detalhes dd{margin-bottom:10px;}
+  .grade-metricas{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+  .valor-metrica{font-size:18px;}
+}

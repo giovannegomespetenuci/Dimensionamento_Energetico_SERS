@@ -3,11 +3,14 @@ declare(strict_types=1);
 
 session_start();
 
+require_once __DIR__ . '/fv_lib.php';   // CP2: dimensionamento fotovoltaico (carrega config_fv.php)
+
 function responderJson(array $dados, int $status = 200): void
 {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($dados, JSON_UNESCAPED_UNICODE);
+    $json = json_encode($dados, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    echo $json === false ? '{"erro":"Falha ao montar a resposta."}' : $json;
     exit;
 }
 
@@ -52,6 +55,7 @@ function carregarEstadoBanco(mysqli $db, int $usuarioId): array
     $imoveis = [];
     $consulta = $db->prepare(
         'SELECT im.id, im.nome, im.endereco, im.tarifa, im.limite_consumo_kwh,
+                im.cidade, im.uf, im.hsp_manual, im.consumo_manual_kwh,
                 COALESCE(v.consumo_total_kwh, 0) AS consumo_total_kwh,
                 COALESCE(v.custo_estimado_reais, 0) AS custo_estimado_reais
          FROM imoveis im
@@ -68,6 +72,10 @@ function carregarEstadoBanco(mysqli $db, int $usuarioId): array
             'endereco' => $imovel['endereco'],
             'tarifa' => $imovel['tarifa'] === null ? null : (float) $imovel['tarifa'],
             'limiteConsumo' => $imovel['limite_consumo_kwh'] === null ? null : (float) $imovel['limite_consumo_kwh'],
+            'cidade' => $imovel['cidade'],
+            'uf' => $imovel['uf'],
+            'hspManual' => $imovel['hsp_manual'] === null ? null : (float) $imovel['hsp_manual'],
+            'consumoManualKwh' => $imovel['consumo_manual_kwh'] === null ? null : (float) $imovel['consumo_manual_kwh'],
             'consumoTotalKwh' => (float) $imovel['consumo_total_kwh'],
             'custoEstimadoReais' => (float) $imovel['custo_estimado_reais'],
             'equipamentos' => []
@@ -157,6 +165,22 @@ function salvarEstadoBanco(mysqli $db, int $usuarioId, array $estado): array
         if ($limite !== null && $limite !== '' && (!is_numeric($limite) || (float) $limite <= 0)) {
             $erro('O limite de consumo deve ser numérico e maior que zero.');
         }
+        // CP2: dados solares do imóvel (opcionais)
+        if (mb_strlen(trim((string) ($imovel['cidade'] ?? ''))) > 100) {
+            $erro('A cidade deve ter no máximo 100 caracteres.');
+        }
+        $ufEntrada = strtoupper(trim((string) ($imovel['uf'] ?? '')));
+        if ($ufEntrada !== '' && !in_array($ufEntrada, FV_UFS, true)) {
+            $erro('UF inválida.');
+        }
+        $hspEntrada = $imovel['hspManual'] ?? null;
+        if ($hspEntrada !== null && $hspEntrada !== '') {
+            fv_validar_hsp($hspEntrada);
+        }
+        $consumoManualEntrada = $imovel['consumoManualKwh'] ?? null;
+        if ($consumoManualEntrada !== null && $consumoManualEntrada !== '' && (!is_numeric($consumoManualEntrada) || (float) $consumoManualEntrada <= 0)) {
+            $erro('O consumo manual deve ser numérico e maior que zero.');
+        }
         if (!isset($imovel['equipamentos']) || !is_array($imovel['equipamentos'])) {
             $erro('A lista de equipamentos do imóvel é inválida.');
         }
@@ -211,11 +235,11 @@ function salvarEstadoBanco(mysqli $db, int $usuarioId, array $estado): array
         $idsCategoriasRemover = array_diff(array_keys($categoriasBanco), $idsCategoriasMantidas);
 
         $imoveisBanco = [];
-        $consulta = $db->prepare('SELECT id FROM imoveis WHERE usuario_id = ?');
+        $consulta = $db->prepare('SELECT id, cidade, uf, hsp_manual, consumo_manual_kwh FROM imoveis WHERE usuario_id = ?');
         $consulta->bind_param('i', $usuarioId);
         $consulta->execute();
         foreach ($consulta->get_result()->fetch_all(MYSQLI_ASSOC) as $linha) {
-            $imoveisBanco[(int) $linha['id']] = true;
+            $imoveisBanco[(int) $linha['id']] = $linha;
         }
         $idsImoveis = [];
         foreach ($imoveisEntrada as $imovel) {
@@ -227,14 +251,24 @@ function salvarEstadoBanco(mysqli $db, int $usuarioId, array $estado): array
             if ($imovelId !== null && !isset($imoveisBanco[$imovelId])) {
                 $erro('Um imóvel enviado não pertence ao usuário atual.');
             }
+            // CP2: dados solares. Se o navegador não enviar o campo, mantém o valor que já está no banco.
+            $atual = $imovelId !== null ? $imoveisBanco[$imovelId] : [];
+            $cidade = array_key_exists('cidade', $imovel) ? trim((string) $imovel['cidade']) : trim((string) ($atual['cidade'] ?? ''));
+            $cidade = $cidade === '' ? null : $cidade;
+            $uf = array_key_exists('uf', $imovel) ? strtoupper(trim((string) $imovel['uf'])) : trim((string) ($atual['uf'] ?? ''));
+            $uf = $uf === '' ? null : $uf;
+            $hspManual = array_key_exists('hspManual', $imovel) ? $imovel['hspManual'] : ($atual['hsp_manual'] ?? null);
+            $hspManual = ($hspManual === null || $hspManual === '') ? null : (float) $hspManual;
+            $consumoManual = array_key_exists('consumoManualKwh', $imovel) ? $imovel['consumoManualKwh'] : ($atual['consumo_manual_kwh'] ?? null);
+            $consumoManual = ($consumoManual === null || $consumoManual === '') ? null : (float) $consumoManual;
             if ($imovelId === null) {
-                $stmt = $db->prepare('INSERT INTO imoveis (usuario_id, nome, endereco, tarifa, limite_consumo_kwh) VALUES (?, ?, ?, ?, ?)');
-                $stmt->bind_param('issdd', $usuarioId, $nome, $endereco, $tarifa, $limite);
+                $stmt = $db->prepare('INSERT INTO imoveis (usuario_id, nome, endereco, tarifa, limite_consumo_kwh, cidade, uf, hsp_manual, consumo_manual_kwh) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                $stmt->bind_param('issddssdd', $usuarioId, $nome, $endereco, $tarifa, $limite, $cidade, $uf, $hspManual, $consumoManual);
                 $stmt->execute();
                 $imovelId = $stmt->insert_id;
             } else {
-                $stmt = $db->prepare('UPDATE imoveis SET nome = ?, endereco = ?, tarifa = ?, limite_consumo_kwh = ? WHERE id = ? AND usuario_id = ?');
-                $stmt->bind_param('ssddii', $nome, $endereco, $tarifa, $limite, $imovelId, $usuarioId);
+                $stmt = $db->prepare('UPDATE imoveis SET nome = ?, endereco = ?, tarifa = ?, limite_consumo_kwh = ?, cidade = ?, uf = ?, hsp_manual = ?, consumo_manual_kwh = ? WHERE id = ? AND usuario_id = ?');
+                $stmt->bind_param('ssddssddii', $nome, $endereco, $tarifa, $limite, $cidade, $uf, $hspManual, $consumoManual, $imovelId, $usuarioId);
                 $stmt->execute();
             }
             $idsImoveis[(string) ($imovel['id'] ?? '')] = $imovelId;
@@ -293,6 +327,234 @@ function salvarEstadoBanco(mysqli $db, int $usuarioId, array $estado): array
         $db->rollback();
         throw $erro;
     }
+}
+
+/* =========================================================================
+   CP2 — DIMENSIONAMENTO FOTOVOLTAICO (funções dos endpoints)
+   Fonte dos catálogos: arquivos dados/*.csv (validados por fv_lib.php).
+   As tabelas fv_modulos, fv_inversores, fv_baterias e hsp_cidades são um
+   ESPELHO desses arquivos no banco, atualizado em "catalogos_fv".
+   ========================================================================= */
+
+function fvapi_id($valor, string $mensagem): int
+{
+    if (is_int($valor) || (is_string($valor) && ctype_digit($valor))) {
+        $id = (int) $valor;
+        if ($id > 0) {
+            return $id;
+        }
+    }
+    throw new FvErro($mensagem);
+}
+
+function fvapi_datasets(): array
+{
+    return fv_carregar_datasets();
+}
+
+/** Dados do imóvel (do usuário logado) usados no dimensionamento. */
+function fvapi_imovel(mysqli $db, int $usuarioId, $imovelId): array
+{
+    $id = fvapi_id($imovelId, 'Informe o imóvel para o dimensionamento.');
+    $stmt = $db->prepare(
+        'SELECT im.id, im.nome, im.cidade, im.uf, im.hsp_manual, im.consumo_manual_kwh,
+                COALESCE(v.consumo_total_kwh, 0) AS consumo_total_kwh
+         FROM imoveis im
+         LEFT JOIN vw_consumo_imovel v ON v.imovel_id = im.id
+         WHERE im.id = ? AND im.usuario_id = ?'
+    );
+    $stmt->bind_param('ii', $id, $usuarioId);
+    $stmt->execute();
+    $linha = $stmt->get_result()->fetch_assoc();
+    if (!$linha) {
+        throw new FvErro('Imóvel não encontrado. Salve o imóvel antes de dimensionar.');
+    }
+    return [
+        'id' => (int) $linha['id'],
+        'nome' => $linha['nome'],
+        'cidade' => ($linha['cidade'] === null || trim((string) $linha['cidade']) === '') ? null : $linha['cidade'],
+        'uf' => ($linha['uf'] === null || trim((string) $linha['uf']) === '') ? null : $linha['uf'],
+        'hsp_manual' => $linha['hsp_manual'] === null ? null : (float) $linha['hsp_manual'],
+        'consumo_manual_kwh' => $linha['consumo_manual_kwh'] === null ? null : (float) $linha['consumo_manual_kwh'],
+        'consumo_estimado_kwh' => (float) $linha['consumo_total_kwh'],
+    ];
+}
+
+/** Só aceita os campos conhecidos; a validação dos valores é feita por fv_dimensionar (HTTP 422). */
+function fvapi_entrada(array $in): array
+{
+    $e = [];
+    foreach (['f', 'eta', 'D', 'tmin_c'] as $k) {
+        if (isset($in[$k]) && $in[$k] !== '') {
+            $e[$k] = $in[$k];
+        }
+    }
+    foreach (['modulo_id', 'inversor_id', 'bateria_id'] as $k) {
+        if (isset($in[$k]) && is_scalar($in[$k]) && trim((string) $in[$k]) !== '') {
+            $e[$k] = trim((string) $in[$k]);
+        }
+    }
+    $e['armazenamento'] = !empty($in['armazenamento']) && $in['armazenamento'] !== 'false';
+    if ($e['armazenamento'] && isset($in['autonomia_h']) && $in['autonomia_h'] !== '') {
+        $e['autonomia_h'] = $in['autonomia_h'];
+    }
+    $e['outros_custos'] = $in['outros_custos'] ?? [];
+    return $e;
+}
+
+/** Refaz TODO o cálculo no servidor (o navegador nunca é fonte do resultado). */
+function fvapi_dimensionar(mysqli $db, int $usuarioId, array $pedido): array
+{
+    $imovel = fvapi_imovel($db, $usuarioId, $pedido['imovel_id'] ?? null);
+    $entrada = fvapi_entrada($pedido);
+    $resultado = fv_dimensionar([
+        'cidade' => $imovel['cidade'],
+        'uf' => $imovel['uf'],
+        'hsp_manual' => $imovel['hsp_manual'],
+        'consumo_manual_kwh' => $imovel['consumo_manual_kwh'],
+        'consumo_estimado_kwh' => $imovel['consumo_estimado_kwh'],
+    ], $entrada, fvapi_datasets());
+    return ['imovel' => $imovel, 'entrada' => $entrada, 'resultado' => $resultado];
+}
+
+/** Colunas de cada tabela espelho: nome => tipo do bind ('s' texto, 'd' número). */
+function fvapi_colunas(): array
+{
+    $col = function (array $textos, array $numeros): array {
+        $r = [];
+        foreach ($textos as $c) {
+            $r[$c] = 's';
+        }
+        foreach ($numeros as $c) {
+            $r[$c] = 'd';
+        }
+        return $r;
+    };
+    return [
+        'fv_modulos' => $col(
+            ['id', 'fabricante', 'modelo', 'fornecedor', 'data_coleta', 'url_fonte', 'url_preco', 'url_especificacoes', 'observacoes'],
+            ['potencia_wp', 'voc_v', 'isc_a', 'vmp_v', 'imp_a', 'eficiencia_pct', 'preco_brl', 'coef_voc_pct_c', 'coef_pmax_pct_c',
+                'comprimento_mm', 'largura_mm', 'espessura_mm', 'peso_kg']
+        ),
+        'fv_inversores' => $col(
+            ['id', 'fabricante', 'modelo', 'tipo', 'compativel_bateria', 'fornecedor', 'data_coleta', 'url_fonte', 'url_preco', 'url_especificacoes', 'observacoes'],
+            ['potencia_nominal_w', 'potencia_max_fv_w', 'tensao_max_entrada_v', 'faixa_mppt_min_v', 'faixa_mppt_max_v', 'corrente_max_entrada_a',
+                'numero_mppt', 'preco_brl', 'strings_por_mppt', 'corrente_curto_mppt_a', 'fases', 'tensao_bat_min_v', 'tensao_bat_max_v',
+                'corrente_carga_max_a', 'corrente_descarga_max_a']
+        ),
+        'fv_baterias' => $col(
+            ['id', 'fabricante', 'modelo', 'tecnologia', 'fornecedor', 'data_coleta', 'url_fonte', 'url_preco', 'url_especificacoes', 'observacoes'],
+            ['tensao_nominal_v', 'capacidade_ah', 'capacidade_kwh', 'dod_pct', 'ciclos', 'preco_brl', 'corrente_carga_max_a',
+                'corrente_descarga_max_a', 'eficiencia_pct']
+        ),
+        'hsp_cidades' => $col(
+            ['cidade', 'uf', 'tipo', 'fonte', 'url_fonte', 'data_dado', 'data_consulta', 'observacoes'],
+            ['latitude', 'longitude', 'hsp_kwh_m2_dia']
+        ),
+    ];
+}
+
+function fvapi_inserir_linhas(mysqli $db, string $tabela, array $colunas, array $linhas): void
+{
+    $nomes = array_keys($colunas);
+    $tipos = implode('', array_values($colunas));
+    $sql = 'INSERT INTO ' . $tabela . ' (' . implode(', ', $nomes) . ') VALUES ('
+        . implode(', ', array_fill(0, count($nomes), '?')) . ')';
+    $stmt = $db->prepare($sql);
+    foreach ($linhas as $linha) {
+        $valores = [];
+        foreach ($colunas as $nome => $tipo) {
+            $v = $linha[$nome] ?? null;
+            if ($tipo === 's') {
+                $v = ($v === null || trim((string) $v) === '') ? null : (string) $v;
+            } else {
+                $v = ($v === null || $v === '') ? null : (float) $v;
+            }
+            $valores[] = $v;
+        }
+        $stmt->bind_param($tipos, ...$valores);
+        $stmt->execute();
+    }
+    $stmt->close();
+}
+
+/** Copia os CSVs já validados para as tabelas espelho (tudo ou nada). */
+function fvapi_sincronizar_catalogos(mysqli $db, array $ds): void
+{
+    $mapa = ['fv_modulos' => 'modulos', 'fv_inversores' => 'inversores', 'fv_baterias' => 'baterias', 'hsp_cidades' => 'hsp'];
+    $colunas = fvapi_colunas();
+    $db->begin_transaction();
+    try {
+        foreach ($mapa as $tabela => $chave) {
+            $db->query('DELETE FROM ' . $tabela);
+            fvapi_inserir_linhas($db, $tabela, $colunas[$tabela], $ds[$chave]);
+        }
+        $db->commit();
+    } catch (Throwable $falha) {
+        $db->rollback();
+        throw $falha;
+    }
+}
+
+function fvapi_catalogo(array $ds): array
+{
+    $cfg = fv_config();
+    $recortar = function (array $linhas, array $chaves): array {
+        $saida = [];
+        foreach ($linhas as $l) {
+            $item = [];
+            foreach ($chaves as $c) {
+                $item[$c] = $l[$c] ?? null;
+            }
+            $saida[] = $item;
+        }
+        return $saida;
+    };
+    $parametros = [];
+    foreach (['f', 'eta', 'D', 'tmin_c'] as $k) {
+        $p = $cfg['parametros'][$k];
+        $parametros[$k] = ['rotulo' => $p['rotulo'], 'unidade' => $p['unidade'], 'padrao' => $p['padrao'], 'min' => $p['min'], 'max' => $p['max'], 'origem' => $p['origem']];
+    }
+    $outros = [];
+    foreach ($cfg['outros_custos'] as $k => $def) {
+        if (is_array($def)) {
+            $outros[] = ['id' => $k, 'rotulo' => $def['rotulo'], 'modo' => $def['modo'], 'valor' => $def['valor']];
+        }
+    }
+    return [
+        'parametros' => $parametros,
+        'hsp_faixa' => ['min' => $cfg['hsp']['min'], 'max' => $cfg['hsp']['max']],
+        'compatibilidade' => ['razao_cc_ca_min' => $cfg['compatibilidade']['razao_cc_ca_min'], 'razao_cc_ca_max' => $cfg['compatibilidade']['razao_cc_ca_max']],
+        'autonomia_max_h' => $cfg['baterias']['autonomia_max_h'],
+        'outros_custos' => $outros,
+        'aviso_limitacoes' => $cfg['aviso_limitacoes'],
+        'cidades' => $recortar($ds['hsp'], ['cidade', 'uf', 'hsp_kwh_m2_dia', 'fonte', 'url_fonte', 'data_consulta']),
+        'modulos' => $recortar($ds['modulos'], ['id', 'fabricante', 'modelo', 'potencia_wp', 'eficiencia_pct', 'preco_brl', 'fornecedor', 'data_coleta', 'url_fonte']),
+        'inversores' => $recortar($ds['inversores'], ['id', 'fabricante', 'modelo', 'tipo', 'potencia_nominal_w', 'potencia_max_fv_w', 'numero_mppt', 'compativel_bateria', 'preco_brl', 'fornecedor', 'data_coleta', 'url_fonte']),
+        'baterias' => $recortar($ds['baterias'], ['id', 'fabricante', 'modelo', 'tecnologia', 'tensao_nominal_v', 'capacidade_kwh', 'dod_pct', 'eficiencia_pct', 'ciclos', 'preco_brl', 'fornecedor', 'data_coleta', 'url_fonte']),
+        'faltas_minimos' => fv_conferir_minimos($ds),
+        'sinteticos' => (bool) ($ds['sinteticos'] ?? false),
+    ];
+}
+
+function fvapi_resumo_proposta(array $l): array
+{
+    return [
+        'id' => (int) $l['id'],
+        'imovel_id' => (int) $l['imovel_id'],
+        'imovel_nome' => $l['imovel_nome'],
+        'titulo' => $l['titulo'],
+        'consumo_kwh_mes' => (float) $l['consumo_kwh_mes'],
+        'percentual_atendimento' => (float) $l['percentual_atendimento'],
+        'p_fv_kwp' => (float) $l['p_fv_kwp'],
+        'p_instalada_kwp' => (float) $l['p_instalada_kwp'],
+        'n_modulos' => (int) $l['n_modulos'],
+        'com_bateria' => (int) $l['com_bateria'] === 1,
+        'custo_equipamentos' => (float) $l['custo_equipamentos'],
+        'custo_outros' => (float) $l['custo_outros'],
+        'custo_total' => (float) $l['custo_total'],
+        'criado_em' => $l['criado_em'],
+    ];
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -367,9 +629,123 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             responderJson(['ok' => true]);
         }
+        /* ---------------------- CP2: dimensionamento fotovoltaico ---------------------- */
+        if ($acao === 'catalogos_fv') {
+            exigirUsuario();
+            $ds = fvapi_datasets();
+            $espelho = true;
+            try {
+                fvapi_sincronizar_catalogos($db, $ds);
+            } catch (Throwable $falha) {
+                $espelho = false; // o cálculo usa os CSVs; o espelho no banco é só consulta
+            }
+            responderJson(['ok' => true, 'catalogo' => fvapi_catalogo($ds), 'espelho_banco' => $espelho]);
+        }
+        if ($acao === 'dimensionar_fv') {
+            $r = fvapi_dimensionar($db, exigirUsuario(), $entrada);
+            responderJson([
+                'ok' => true,
+                'imovel' => ['id' => $r['imovel']['id'], 'nome' => $r['imovel']['nome'], 'cidade' => $r['imovel']['cidade'], 'uf' => $r['imovel']['uf']],
+                'entrada' => $r['entrada'],
+                'resultado' => $r['resultado'],
+            ]);
+        }
+        if ($acao === 'salvar_proposta') {
+            $usuarioId = exigirUsuario();
+            $r = fvapi_dimensionar($db, $usuarioId, $entrada);   // o servidor refaz o cálculo antes de salvar
+            $res = $r['resultado'];
+            if (!$res['completa']) {
+                throw new FvErro('Não é possível salvar uma proposta incompleta: ' . implode(' ', $res['bloqueios']));
+            }
+            $titulo = is_scalar($entrada['titulo'] ?? null) ? trim((string) $entrada['titulo']) : '';
+            if ($titulo === '') {
+                $titulo = mb_substr('Proposta ' . $r['imovel']['nome'] . ' - ' . date('d/m/Y H:i'), 0, 150);
+            }
+            if (mb_strlen($titulo) > 150) {
+                throw new FvErro('O título da proposta deve ter no máximo 150 caracteres.');
+            }
+            $imovelId = $r['imovel']['id'];
+            $consumo = (float) $res['consumo']['valor_kwh_mes'];
+            $percentual = (float) $res['parametros']['f'];
+            $pfv = (float) $res['p_fv_kwp'];
+            $pinst = (float) $res['sistema']['p_instalada_kwp'];
+            $nMod = (int) $res['sistema']['n_modulos'];
+            $comBateria = $res['armazenamento']['habilitado'] ? 1 : 0;
+            $custoEq = (float) $res['orcamento']['custo_equipamentos'];
+            $custoOutros = (float) $res['orcamento']['custo_outros'];
+            $custoTotal = (float) $res['orcamento']['custo_total'];
+            $entradaJson = json_encode(['imovel' => $r['imovel'], 'parametros_enviados' => $r['entrada']], JSON_UNESCAPED_UNICODE);
+            $resultadoJson = json_encode($res, JSON_UNESCAPED_UNICODE);
+            if ($entradaJson === false || $resultadoJson === false) {
+                throw new RuntimeException('Falha ao serializar a proposta.');
+            }
+            $stmt = $db->prepare(
+                'INSERT INTO propostas_fv (usuario_id, imovel_id, titulo, consumo_kwh_mes, percentual_atendimento, p_fv_kwp, p_instalada_kwp,
+                                           n_modulos, com_bateria, custo_equipamentos, custo_outros, custo_total, entrada_json, resultado_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            );
+            $stmt->bind_param('iisddddiidddss', $usuarioId, $imovelId, $titulo, $consumo, $percentual, $pfv, $pinst, $nMod, $comBateria,
+                $custoEq, $custoOutros, $custoTotal, $entradaJson, $resultadoJson);
+            $stmt->execute();
+            responderJson(['ok' => true, 'id' => (int) $stmt->insert_id, 'titulo' => $titulo]);
+        }
+        if ($acao === 'listar_propostas') {
+            $usuarioId = exigirUsuario();
+            $filtro = (isset($entrada['imovel_id']) && $entrada['imovel_id'] !== '') ? fvapi_id($entrada['imovel_id'], 'Imóvel inválido.') : null;
+            $sql = 'SELECT p.id, p.imovel_id, i.nome AS imovel_nome, p.titulo, p.consumo_kwh_mes, p.percentual_atendimento, p.p_fv_kwp,
+                           p.p_instalada_kwp, p.n_modulos, p.com_bateria, p.custo_equipamentos, p.custo_outros, p.custo_total, p.criado_em
+                    FROM propostas_fv p JOIN imoveis i ON i.id = p.imovel_id
+                    WHERE p.usuario_id = ?' . ($filtro !== null ? ' AND p.imovel_id = ?' : '') . '
+                    ORDER BY p.criado_em DESC, p.id DESC';
+            $stmt = $db->prepare($sql);
+            if ($filtro !== null) {
+                $stmt->bind_param('ii', $usuarioId, $filtro);
+            } else {
+                $stmt->bind_param('i', $usuarioId);
+            }
+            $stmt->execute();
+            $lista = [];
+            foreach ($stmt->get_result()->fetch_all(MYSQLI_ASSOC) as $linha) {
+                $lista[] = fvapi_resumo_proposta($linha);
+            }
+            responderJson(['ok' => true, 'propostas' => $lista]);
+        }
+        if ($acao === 'abrir_proposta') {
+            $usuarioId = exigirUsuario();
+            $id = fvapi_id($entrada['id'] ?? null, 'Informe a proposta que deseja abrir.');
+            $stmt = $db->prepare(
+                'SELECT p.*, i.nome AS imovel_nome FROM propostas_fv p JOIN imoveis i ON i.id = p.imovel_id
+                 WHERE p.id = ? AND p.usuario_id = ?'
+            );
+            $stmt->bind_param('ii', $id, $usuarioId);
+            $stmt->execute();
+            $linha = $stmt->get_result()->fetch_assoc();
+            if (!$linha) {
+                throw new FvErro('Proposta não encontrada.');
+            }
+            responderJson([
+                'ok' => true,
+                'proposta' => fvapi_resumo_proposta($linha),
+                'entrada' => json_decode((string) $linha['entrada_json'], true),
+                'resultado' => json_decode((string) $linha['resultado_json'], true),
+            ]);
+        }
+        if ($acao === 'excluir_proposta') {
+            $usuarioId = exigirUsuario();
+            $id = fvapi_id($entrada['id'] ?? null, 'Informe a proposta que deseja excluir.');
+            $stmt = $db->prepare('DELETE FROM propostas_fv WHERE id = ? AND usuario_id = ?');
+            $stmt->bind_param('ii', $id, $usuarioId);
+            $stmt->execute();
+            if ($stmt->affected_rows === 0) {
+                throw new FvErro('Proposta não encontrada.');
+            }
+            responderJson(['ok' => true]);
+        }
         responderJson(['erro' => 'Ação desconhecida.'], 400);
     } catch (InvalidArgumentException $erro) {
         responderJson(['erro' => $erro->getMessage()], 422);
+    } catch (FvDatasetErro $erro) {
+        responderJson(['erro' => 'Os arquivos de equipamentos (dados/*.csv) estão inválidos. Corrija-os e tente novamente.', 'problemas' => $erro->problemas], 500);
     } catch (Throwable $erro) {
         responderJson(['erro' => 'Não foi possível concluir a operação no banco de dados.'], 500);
     }
@@ -517,6 +893,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <button data-aba-imovel="dados" class="ativa">Dados do imóvel</button>
         <button data-aba-imovel="equipamentos" disabled>Equipamentos</button>
         <button data-aba-imovel="relatorio" disabled>Relatório</button>
+        <button data-aba-imovel="solar" disabled>Solar</button>
         <button data-aba-imovel="importar" disabled>Importar planilha</button>
       </div>
 
@@ -635,6 +1012,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <div class="grafico-caixa">
           <canvas id="grafico-pizza"></canvas>
+        </div>
+      </div>
+
+      <!-- Aba: solar (CP2) -->
+      <div id="aba-solar" class="aba-imovel-conteudo hidden">
+        <datalist id="lista-cidades-fv"></datalist>
+        <div class="painel" style="margin-bottom:18px;">
+          <h3 style="margin-bottom:6px;">Dimensionamento fotovoltaico</h3>
+          <p class="ajuda" style="margin:0 0 16px 0;">Pré-dimensionamento acadêmico a partir do consumo do imóvel, do recurso solar (HSP) e dos catálogos de equipamentos. Campos em branco usam o valor padrão.</p>
+
+          <h4 class="titulo-bloco">1. Localização, consumo e atendimento</h4>
+          <div class="linha-campos">
+            <div class="campo">
+              <label for="solar-cidade">Cidade</label>
+              <input type="text" id="solar-cidade" list="lista-cidades-fv" autocomplete="off">
+              <div class="ajuda">O catálogo de HSP tem as capitais; outras cidades usam a capital da UF.</div>
+            </div>
+            <div class="campo">
+              <label for="solar-uf">UF</label>
+              <select id="solar-uf"></select>
+            </div>
+            <div class="campo">
+              <label for="solar-hsp-manual">HSP manual (kWh/m².dia)</label>
+              <input type="number" id="solar-hsp-manual" min="1" max="9" step="0.001">
+              <div class="ajuda">Opcional. Se preenchido, vale mais que cidade/UF.</div>
+            </div>
+          </div>
+          <div class="linha-campos">
+            <div class="campo">
+              <label for="solar-consumo-manual">Consumo mensal manual (kWh/mês)</label>
+              <input type="number" id="solar-consumo-manual" min="0" step="0.1">
+              <div class="ajuda" id="solar-ajuda-consumo"></div>
+            </div>
+            <div class="campo">
+              <label for="solar-f">Percentual do consumo a atender (f, %)</label>
+              <input type="number" id="solar-f" min="1" max="100" step="1">
+              <div class="ajuda" id="solar-ajuda-f"></div>
+            </div>
+          </div>
+
+          <h4 class="titulo-bloco">2. Parâmetros do cálculo</h4>
+          <div class="linha-campos">
+            <div class="campo">
+              <label for="solar-eta">Fator global de desempenho (η)</label>
+              <input type="number" id="solar-eta" min="0.5" max="0.95" step="0.01">
+              <div class="ajuda" id="solar-ajuda-eta"></div>
+            </div>
+            <div class="campo">
+              <label for="solar-d">Dias do mês (D)</label>
+              <input type="number" id="solar-d" min="28" max="31" step="1">
+              <div class="ajuda" id="solar-ajuda-d"></div>
+            </div>
+            <div class="campo">
+              <label for="solar-tmin">Temperatura mínima de projeto (°C)</label>
+              <input type="number" id="solar-tmin" min="-30" max="25" step="1">
+              <div class="ajuda" id="solar-ajuda-tmin"></div>
+            </div>
+          </div>
+
+          <h4 class="titulo-bloco">3. Armazenamento por baterias (opcional)</h4>
+          <div class="check-linha" style="margin-top:0;">
+            <input type="checkbox" id="solar-armazenamento">
+            <label for="solar-armazenamento" style="margin:0;color:var(--text-muted);">Incluir baterias na solução</label>
+          </div>
+          <div class="linha-campos">
+            <div class="campo" style="max-width:260px;">
+              <label for="solar-autonomia">Autonomia desejada (horas)</label>
+              <input type="number" id="solar-autonomia" min="0" max="24" step="0.5" disabled>
+            </div>
+          </div>
+
+          <h4 class="titulo-bloco">4. Outros custos (R$)</h4>
+          <div class="linha-campos" id="solar-outros-custos"></div>
+
+          <h4 class="titulo-bloco">5. Escolha de equipamentos</h4>
+          <div class="linha-campos">
+            <div class="campo">
+              <label for="solar-sel-modulo">Módulo</label>
+              <select id="solar-sel-modulo"><option value="">Automático (menor custo)</option></select>
+            </div>
+            <div class="campo">
+              <label for="solar-sel-inversor">Inversor</label>
+              <select id="solar-sel-inversor"><option value="">Automático (menor preço compatível)</option></select>
+            </div>
+            <div class="campo">
+              <label for="solar-sel-bateria">Bateria</label>
+              <select id="solar-sel-bateria" disabled><option value="">Automático (menor custo compatível)</option></select>
+            </div>
+          </div>
+          <div class="ajuda" style="margin-bottom:12px;">As listas aparecem depois do primeiro cálculo. Ao escolher outro módulo, o inversor e a bateria voltam para o automático, pois a compatibilidade muda.</div>
+
+          <div class="erro-campo" id="erro-solar" style="margin-bottom:10px;"></div>
+          <button class="btn btn-principal" id="btn-solar-dimensionar">Dimensionar</button>
+        </div>
+
+        <div id="solar-resultado"></div>
+
+        <div class="painel" style="margin-top:18px;">
+          <h3 style="margin-bottom:10px;">Propostas salvas deste imóvel</h3>
+          <div id="solar-lista-propostas"><p class="ajuda">Nenhuma proposta salva.</p></div>
         </div>
       </div>
 

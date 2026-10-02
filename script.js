@@ -384,6 +384,7 @@ function confirmarExclusaoImovel(id) {
 
 function criarNovoImovel() {
   idImovelAtual = null;
+  limparSolar();
   document.getElementById('titulo-imovel').textContent = 'Novo imóvel';
   document.getElementById('input-nome-imovel').value = '';
   document.getElementById('input-endereco-imovel').value = '';
@@ -397,6 +398,7 @@ function criarNovoImovel() {
 
 function abrirImovel(id) {
   idImovelAtual = id;
+  limparSolar();
   const im = estado.imoveis.find(i => i.id === id);
   document.getElementById('titulo-imovel').textContent = im.nome;
   document.getElementById('input-nome-imovel').value = im.nome;
@@ -430,6 +432,7 @@ function abrirAbaImovel(nome) {
   document.getElementById('aba-' + nome).classList.remove('hidden');
   if (nome === 'equipamentos') renderizarEquipamentos();
   if (nome === 'relatorio') renderizarRelatorio();
+  if (nome === 'solar') renderizarSolar();
 }
 
 function escapeHtml(texto) {
@@ -463,6 +466,10 @@ document.getElementById('btn-salvar-imovel').addEventListener('click', async () 
       endereco: endereco.trim(),
       tarifa: null,
       limiteConsumo: null,
+      cidade: null,
+      uf: null,
+      hspManual: null,
+      consumoManualKwh: null,
       equipamentos: []
     };
     estado.imoveis.push(novo);
@@ -716,6 +723,17 @@ function renderizarGraficoPizza(im) {
   });
 }
 
+/* ajudante compartilhado de exportação CSV (relatório da CP1 e proposta fotovoltaica da CP2) */
+function baixarCsv(linhas, nomeArquivo) {
+  const csv = linhas.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = nomeArquivo;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 document.getElementById('btn-exportar-csv').addEventListener('click', () => {
   const im = estado.imoveis.find(i => i.id === idImovelAtual);
   if (!im) return;
@@ -724,13 +742,7 @@ document.getElementById('btn-exportar-csv').addEventListener('click', () => {
   linhas.push([]);
   linhas.push(['Consumo total (kWh/mês)', calcularConsumoTotal(im).toFixed(2)]);
   if (im.tarifa) linhas.push(['Custo estimado', formatarMoeda(calcularCusto(calcularConsumoTotal(im), im.tarifa))]);
-  const csv = linhas.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `relatorio_${im.nome.replace(/\s+/g, '_')}.csv`;
-  link.click();
-  URL.revokeObjectURL(link.href);
+  baixarCsv(linhas, `relatorio_${im.nome.replace(/\s+/g, '_')}.csv`);
 });
 
 document.getElementById('btn-exportar-pdf').addEventListener('click', () => {
@@ -767,13 +779,39 @@ document.getElementById('btn-exportar-pdf').addEventListener('click', () => {
    ABA "IMPORTAR PLANILHA" (US11)
    ========================================================================= */
 
-function localizarValorColuna(linhaObjeto, possiveisNomes) {
-  const chaves = Object.keys(linhaObjeto);
-  for (const nomeAlvo of possiveisNomes) {
-    const chave = chaves.find(k => k.trim().toLowerCase() === nomeAlvo);
-    if (chave !== undefined) return linhaObjeto[chave];
-  }
-  return undefined;
+function normalizarChave(k) {
+  return String(k == null ? '' : k)
+    .replace(/^\uFEFF/, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/["']/g, '')
+    .trim().toLowerCase();
+}
+
+// Aceita variações de cabeçalho: "Nome", "nome do equipamento", "Potência (W)", "potencia_w"...
+// e até cabeçalhos com acento corrompido (CSV salvo em ANSI): basta começar com "pot", "categ" ou "nome".
+const PREFIXOS_COLUNA = {
+  nome: ['nome', 'equipamento', 'descricao'],
+  categoria: ['categ'],
+  potencia: ['pot', 'watt']
+};
+
+function localizarValorColuna(linhaObjeto, coluna) {
+  const prefixos = PREFIXOS_COLUNA[coluna] || [coluna];
+  const chave = Object.keys(linhaObjeto).find(k => {
+    const n = normalizarChave(k);
+    return prefixos.some(p => n.startsWith(p));
+  });
+  return chave === undefined ? undefined : linhaObjeto[chave];
+}
+
+// "1500", "1.500", "1500,5", "1.500,5", "1500 W" -> número (ou NaN)
+function converterPotencia(bruta) {
+  if (typeof bruta === 'number') return bruta;
+  if (bruta === undefined || bruta === null) return NaN;
+  let t = String(bruta).trim().replace(/\s*w(atts?)?$/i, '').replace(/\s/g, '');
+  if (t === '') return NaN;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  return Number(t);
 }
 
 function validarEProcessarLinhas(linhasBrutas) {
@@ -781,17 +819,17 @@ function validarEProcessarLinhas(linhasBrutas) {
   const invalidas = [];
   linhasBrutas.forEach((linha, indice) => {
     const numeroLinha = indice + 2; // +1 cabeçalho, +1 base 1
-    const nome = localizarValorColuna(linha, ['nome']);
-    const categoria = localizarValorColuna(linha, ['categoria']);
-    const potenciaBruta = localizarValorColuna(linha, ['potencia', 'potência', 'potencia (w)', 'potência (w)']);
+    const nome = localizarValorColuna(linha, 'nome');
+    const categoria = localizarValorColuna(linha, 'categoria');
+    const potencia = converterPotencia(localizarValorColuna(linha, 'potencia'));
     const motivos = [];
     if (!validarTexto(nome)) motivos.push('nome ausente');
     if (!validarTexto(categoria)) motivos.push('categoria ausente');
-    if (!validarPotencia(potenciaBruta)) motivos.push('potência inválida (deve ser numérica e maior que zero)');
+    if (!validarPotencia(potencia)) motivos.push('potência inválida (deve ser numérica e maior que zero)');
     if (motivos.length > 0) {
       invalidas.push({ numeroLinha, motivos });
     } else {
-      validas.push({ nome: String(nome).trim(), categoria: String(categoria).trim(), potencia: Number(potenciaBruta) });
+      validas.push({ nome: String(nome).trim(), categoria: String(categoria).trim(), potencia });
     }
   });
   return { validas, invalidas };
@@ -809,11 +847,20 @@ document.getElementById('input-arquivo-planilha').addEventListener('change', (ev
     const { validas, invalidas } = validarEProcessarLinhas(linhasObjeto);
     arquivoImportadoLinhas = validas;
     exibirResultadoImportacao(validas, invalidas);
+    // diagnóstico: se nenhuma coluna foi reconhecida, mostra o que o sistema leu no cabeçalho
+    if (linhasObjeto.length > 0 && validas.length === 0) {
+      const colunas = Object.keys(linhasObjeto[0]);
+      const reconhecidas = ['nome', 'categoria', 'potencia'].filter(c => colunas.some(k => PREFIXOS_COLUNA[c].some(p => normalizarChave(k).startsWith(p))));
+      if (reconhecidas.length < 3) {
+        document.getElementById('resultado-importacao').insertAdjacentHTML('afterbegin',
+          `<p class="linha-invalida"><strong>Cabeçalho não reconhecido.</strong> A 1ª linha do arquivo precisa ter as colunas nome, categoria e potencia. Colunas lidas: ${colunas.map(c => '"' + escapeHtml(c) + '"').join(', ')}.</p>`);
+      }
+    }
   };
 
   if (extensao === 'csv') {
     if (typeof Papa === 'undefined') { mostrarToast('Biblioteca de leitura de CSV indisponível (verifique a conexão).', 'erro'); return; }
-    Papa.parse(arquivo, { header: true, skipEmptyLines: true, complete: (res) => processar(res.data) });
+    Papa.parse(arquivo, { header: true, skipEmptyLines: true, delimitersToGuess: [',', ';', '\t', '|'], complete: (res) => processar(res.data) });
   } else if (extensao === 'xlsx' || extensao === 'xls') {
     if (typeof XLSX === 'undefined') { mostrarToast('Biblioteca de leitura de planilhas indisponível (verifique a conexão).', 'erro'); return; }
     const leitor = new FileReader();
@@ -944,8 +991,10 @@ document.getElementById('btn-comparar').addEventListener('click', () => {
   const idA = document.getElementById('select-cenario-a').value;
   const idB = document.getElementById('select-cenario-b').value;
   if (idA === idB) { mostrarToast('Selecione dois imóveis diferentes.', 'erro'); return; }
-  const imA = estado.imoveis.find(i => i.id === idA);
-  const imB = estado.imoveis.find(i => i.id === idB);
+  // o <select> devolve texto e o id vindo do banco é número: compara como texto
+  const imA = estado.imoveis.find(i => String(i.id) === idA);
+  const imB = estado.imoveis.find(i => String(i.id) === idB);
+  if (!imA || !imB) { mostrarToast('Não foi possível localizar os imóveis selecionados.', 'erro'); return; }
   const r = compararCenarios(imA, imB);
   const diffClasse = r.diffKwh > 0 ? 'pos' : (r.diffKwh < 0 ? 'neg' : '');
   const sinal = r.diffKwh > 0 ? '+' : '';
@@ -958,6 +1007,633 @@ document.getElementById('btn-comparar').addEventListener('click', () => {
         <div><div class="ajuda">Diferença (B − A)</div><div class="num diff ${diffClasse}">${sinal}${r.diffKwh.toFixed(1)} kWh (${pctTexto})</div></div>
       </div>
     </div>`;
+});
+
+/* =========================================================================
+   ABA "SOLAR" — pré-dimensionamento fotovoltaico (CP2: US18 a US32)
+   O navegador só coleta os dados e mostra o resultado: o cálculo é refeito
+   pelo servidor (endpoints dimensionar_fv / salvar_proposta).
+   ========================================================================= */
+
+const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
+
+let catalogoFv = null;      // catálogo vindo do servidor (cidades, parâmetros, avisos)
+let propostaFvAtual = null; // { resultado, entrada, imovelNome, salva: null | { id, titulo, criadoEm } }
+let entradaFvAtual = null;  // dados exatos enviados ao servidor no último cálculo
+let selecaoFv = { modulo: '', inversor: '', bateria: '' }; // '' = automático
+let solarPreenchido = false;
+
+function porId(id) { return document.getElementById(id); }
+
+function fmtFv(valor, casas) {
+  const n = Number(valor);
+  if (!isFinite(n)) return '—';
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+}
+
+function escapeAttr(texto) {
+  return escapeHtml(texto).replace(/"/g, '&quot;');
+}
+
+function linkSeguro(url, rotulo) {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) return escapeHtml(rotulo || u);
+  return `<a href="${escapeAttr(u)}" target="_blank" rel="noopener">${escapeHtml(rotulo || u)}</a>`;
+}
+
+function formatarDataHora(texto) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(texto || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : String(texto || '');
+}
+
+function textoOrigemHsp(h) {
+  if (h.origem === 'manual') return 'informado manualmente pelo usuário';
+  const local = h.cidade ? `${h.cidade}/${h.uf}` : '';
+  if (h.origem === 'cidade') return `cidade ${local} do catálogo de HSP`;
+  return `capital da UF (${local}), porque a cidade não está no catálogo`;
+}
+
+function limparSolar() {
+  propostaFvAtual = null;
+  entradaFvAtual = null;
+  selecaoFv = { modulo: '', inversor: '', bateria: '' };
+  solarPreenchido = false;
+  if (porId('solar-resultado')) porId('solar-resultado').innerHTML = '';
+  mostrarErroCampo('erro-solar', '');
+}
+
+/* ---------- catálogo e campos do formulário ---------- */
+
+async function garantirCatalogoFv() {
+  if (catalogoFv) return true;
+  try {
+    const resposta = await apiRequest('catalogos_fv');
+    catalogoFv = resposta.catalogo;
+    montarCamposCatalogoFv();
+    return true;
+  } catch (erro) {
+    mostrarToast(erro.message || 'Não foi possível carregar os catálogos solares.', 'erro');
+    return false;
+  }
+}
+
+function montarCamposCatalogoFv() {
+  porId('lista-cidades-fv').innerHTML = catalogoFv.cidades
+    .map(c => `<option value="${escapeAttr(c.cidade)}">${escapeHtml(c.uf)}</option>`).join('');
+  [['f', 'solar-f', 'solar-ajuda-f'], ['eta', 'solar-eta', 'solar-ajuda-eta'],
+    ['D', 'solar-d', 'solar-ajuda-d'], ['tmin_c', 'solar-tmin', 'solar-ajuda-tmin']].forEach(([chave, idCampo, idAjuda]) => {
+    const def = catalogoFv.parametros[chave];
+    porId(idCampo).placeholder = String(def.padrao);
+    porId(idAjuda).textContent = `Padrão ${fmtFv(def.padrao, 2)}; aceito de ${fmtFv(def.min, 2)} a ${fmtFv(def.max, 2)} ${def.unidade}.`;
+  });
+  const unidadeModo = { valor: 'R$', por_kwp: 'R$/kWp', por_modulo: 'R$/módulo', percentual_equipamentos: '% dos equipamentos' };
+  porId('solar-outros-custos').innerHTML = catalogoFv.outros_custos.map(c => `
+    <div class="campo">
+      <label for="solar-custo-${escapeAttr(c.id)}">${escapeHtml(c.rotulo)} (${escapeHtml(unidadeModo[c.modo] || 'R$')})</label>
+      <input type="number" id="solar-custo-${escapeAttr(c.id)}" data-custo="${escapeAttr(c.id)}" min="0" step="0.01" placeholder="${escapeAttr(c.valor)}">
+    </div>`).join('');
+  porId('solar-autonomia').max = catalogoFv.autonomia_max_h;
+}
+
+function popularUfSolar() {
+  porId('solar-uf').innerHTML = '<option value="">—</option>' + UFS_BR.map(u => `<option value="${u}">${u}</option>`).join('');
+}
+
+function preencherCamposSolar(im) {
+  porId('solar-cidade').value = im.cidade || '';
+  porId('solar-uf').value = im.uf || '';
+  porId('solar-hsp-manual').value = (im.hspManual === null || im.hspManual === undefined) ? '' : im.hspManual;
+  porId('solar-consumo-manual').value = (im.consumoManualKwh === null || im.consumoManualKwh === undefined) ? '' : im.consumoManualKwh;
+}
+
+function atualizarAjudaConsumo(im) {
+  porId('solar-ajuda-consumo').textContent =
+    `Estimado pelos equipamentos: ${fmtFv(calcularConsumoTotal(im), 1)} kWh/mês. Se preencher aqui, este valor vale mais.`;
+}
+
+async function renderizarSolar() {
+  const im = estado.imoveis.find(i => i.id === idImovelAtual);
+  if (!im) return;
+  await garantirCatalogoFv();
+  if (!solarPreenchido) {
+    preencherCamposSolar(im);
+    solarPreenchido = true;
+  }
+  atualizarAjudaConsumo(im);
+  carregarPropostasFv();
+}
+
+function lerNumeroOpcional(idCampo) {
+  const bruto = porId(idCampo).value.trim();
+  return bruto === '' ? null : Number(bruto);
+}
+
+function lerCamposSolar() {
+  const cidade = porId('solar-cidade').value.trim();
+  const uf = porId('solar-uf').value;
+  const hsp = lerNumeroOpcional('solar-hsp-manual');
+  const consumo = lerNumeroOpcional('solar-consumo-manual');
+  if (cidade.length > 100) return { erro: 'A cidade deve ter no máximo 100 caracteres.' };
+  if (hsp !== null && !(hsp >= 1 && hsp <= 9)) return { erro: 'O HSP manual deve estar entre 1 e 9 kWh/m².dia.' };
+  if (consumo !== null && !(consumo > 0)) return { erro: 'O consumo manual deve ser maior que zero.' };
+
+  const entrada = {};
+  [['f', 'solar-f'], ['eta', 'solar-eta'], ['D', 'solar-d'], ['tmin_c', 'solar-tmin']].forEach(([chave, idCampo]) => {
+    const v = lerNumeroOpcional(idCampo);
+    if (v !== null) entrada[chave] = v;
+  });
+  const armazenamento = porId('solar-armazenamento').checked;
+  entrada.armazenamento = armazenamento;
+  if (armazenamento) {
+    const autonomia = lerNumeroOpcional('solar-autonomia');
+    if (autonomia === null || !(autonomia > 0)) return { erro: 'Informe a autonomia desejada (horas), maior que zero.' };
+    entrada.autonomia_h = autonomia;
+  }
+  const outros = {};
+  document.querySelectorAll('[data-custo]').forEach(campo => {
+    const v = campo.value.trim();
+    if (v !== '') outros[campo.dataset.custo] = Number(v);
+  });
+  entrada.outros_custos = outros;
+  if (selecaoFv.modulo) entrada.modulo_id = selecaoFv.modulo;
+  if (selecaoFv.inversor) entrada.inversor_id = selecaoFv.inversor;
+  if (armazenamento && selecaoFv.bateria) entrada.bateria_id = selecaoFv.bateria;
+
+  return {
+    erro: '',
+    dadosImovel: { cidade: cidade || null, uf: uf || null, hspManual: hsp, consumoManualKwh: consumo },
+    entrada
+  };
+}
+
+/* ---------- cálculo ---------- */
+
+async function dimensionarSolar() {
+  if (!idImovelAtual) return;
+  const leitura = lerCamposSolar();
+  if (leitura.erro) { mostrarErroCampo('erro-solar', leitura.erro); return; }
+  mostrarErroCampo('erro-solar', '');
+  const botao = porId('btn-solar-dimensionar');
+  botao.disabled = true;
+  try {
+    const im = estado.imoveis.find(i => i.id === idImovelAtual);
+    const mudou = ['cidade', 'uf', 'hspManual', 'consumoManualKwh'].some(k => {
+      const atual = (im[k] === undefined) ? null : im[k];
+      return atual !== leitura.dadosImovel[k];
+    });
+    if (mudou) {
+      Object.assign(im, leitura.dadosImovel);
+      if (!(await salvarEstado()) || !idImovelAtual) return; // salvarEstado já avisa o erro
+    }
+    const resposta = await apiRequest('dimensionar_fv', Object.assign({ imovel_id: idImovelAtual }, leitura.entrada));
+    entradaFvAtual = leitura.entrada;
+    propostaFvAtual = { resultado: resposta.resultado, entrada: resposta.entrada, imovelNome: resposta.imovel.nome, salva: null };
+    renderizarPropostaFv();
+  } catch (erro) {
+    mostrarErroCampo('erro-solar', erro.message);
+    mostrarToast(erro.message, 'erro');
+  } finally {
+    botao.disabled = false;
+  }
+}
+
+function popularSelecoesFv(r) {
+  const preencher = (idSelect, opcoes, escolhido, textoAuto, habilitado) => {
+    const sel = porId(idSelect);
+    sel.innerHTML = `<option value="">${escapeHtml(textoAuto)}</option>` +
+      opcoes.map(o => `<option value="${escapeAttr(o.id)}">${escapeHtml(o.texto)}</option>`).join('');
+    sel.value = escolhido || '';
+    if (sel.value !== (escolhido || '')) sel.value = '';
+    sel.disabled = !habilitado;
+  };
+  preencher('solar-sel-modulo', r.modulos.opcoes.map(m => ({
+    id: m.id,
+    texto: `${m.fabricante} ${m.modelo} - ${fmtFv(m.potencia_wp, 0)} Wp x ${m.n} = ${formatarMoeda(m.custo_arranjo)}${m.recomendado ? ' (menor custo)' : ''}`
+  })), selecaoFv.modulo, 'Automático (menor custo)', true);
+  preencher('solar-sel-inversor', r.inversores.opcoes.map(i => ({
+    id: i.id,
+    texto: `${i.fabricante} ${i.modelo} - ${fmtFv(i.potencia_ca_kw, 1)} kW - ${formatarMoeda(i.preco_unitario)}`
+  })), selecaoFv.inversor, 'Automático (menor preço compatível)', true);
+  preencher('solar-sel-bateria', r.baterias.opcoes.map(b => ({
+    id: b.id,
+    texto: `${b.fabricante} ${b.modelo} - ${b.n_bat} un. - ${formatarMoeda(b.custo_banco)}`
+  })), selecaoFv.bateria, 'Automático (menor custo compatível)', !!r.armazenamento.habilitado);
+}
+
+/* ---------- tela da proposta ---------- */
+
+function verificacoesHtml(titulo, lista) {
+  if (!lista || !lista.length) return '';
+  return `<h4 class="titulo-bloco">${escapeHtml(titulo)}</h4><ul class="lista-verificacoes">` +
+    lista.map(v => `<li class="${v.ok ? 'ok' : 'falha'}"><span class="marca-ver">${v.ok ? 'OK' : 'FALHA'}</span> ${escapeHtml(v.mensagem)}</li>`).join('') + '</ul>';
+}
+
+function motivosFalha(lista) {
+  return (lista || []).filter(v => !v.ok).map(v => v.mensagem).join(' ');
+}
+
+function renderizarPropostaFv() {
+  const caixa = porId('solar-resultado');
+  const p = propostaFvAtual;
+  if (!p) { caixa.innerHTML = ''; return; }
+  const r = p.resultado;
+  popularSelecoesFv(r);
+
+  const completa = !!r.completa;
+  const par = r.parametros;
+  const orc = r.orcamento;
+  const ger = r.geracao;
+  const bat = r.sistema.bateria;
+  const modEsc = r.modulos.opcoes.find(m => m.id === r.modulos.escolhido) || null;
+  const invEsc = r.inversores.opcoes.find(i => i.id === r.inversores.escolhido) || null;
+
+  const cartao = (rotulo, valor, detalhe) => `
+    <div class="cartao-metrica"><div class="rotulo-metrica">${escapeHtml(rotulo)}</div>
+      <div class="valor-metrica">${valor}</div>${detalhe ? `<div class="detalhe-metrica">${escapeHtml(detalhe)}</div>` : ''}</div>`;
+  const dl = (pares) => `<dl class="lista-detalhes">${pares.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`).join('')}</dl>`;
+
+  let h = '<div class="painel proposta-fv">';
+  h += '<div class="cabecalho-proposta"><h3>Proposta preliminar de sistema fotovoltaico</h3><div class="acoes-proposta">';
+  if (completa && !p.salva) h += '<button class="btn btn-principal btn-pequeno" id="btn-solar-salvar">Salvar proposta</button>';
+  if (completa) h += '<button class="btn btn-pequeno" id="btn-solar-csv">Exportar CSV</button><button class="btn btn-pequeno" id="btn-solar-pdf">Exportar PDF</button>';
+  h += '</div></div>';
+
+  if (p.salva) {
+    h += `<div class="aviso-snapshot">Proposta salva: <strong>${escapeHtml(p.salva.titulo)}</strong>${p.salva.criadoEm ? ' em ' + escapeHtml(formatarDataHora(p.salva.criadoEm)) : ''}. Valores e preços são os da época do cálculo.</div>`;
+  }
+  h += `<div class="aviso-academico">${escapeHtml(r.aviso_limitacoes)}</div>`;
+  if (r.dados_sinteticos) h += '<div class="bloqueio-solar">ATENÇÃO: esta proposta usa dados SINTÉTICOS (somente para teste).</div>';
+  if (r.bloqueios.length) {
+    h += `<div class="bloqueio-solar"><strong>Não foi possível concluir o dimensionamento:</strong><ul>${r.bloqueios.map(b => `<li>${escapeHtml(b)}</li>`).join('')}</ul></div>`;
+  }
+
+  h += '<div class="grade-metricas">';
+  h += cartao('Consumo de referência', `${fmtFv(r.consumo.valor_kwh_mes, 1)}<span>kWh/mês</span>`, r.consumo.origem === 'manual' ? 'informado manualmente' : 'estimado pelos equipamentos');
+  h += cartao('Percentual atendido (f)', `${fmtFv(par.f, 1)}<span>%</span>`);
+  h += cartao('Energia a gerar (E_FV)', `${fmtFv(r.e_fv_kwh_mes, 1)}<span>kWh/mês</span>`);
+  h += cartao('Potência FV calculada', `${fmtFv(r.p_fv_kwp, 3)}<span>kWp</span>`);
+  if (r.sistema.n_modulos > 0) h += cartao('Potência instalada', `${fmtFv(r.sistema.p_instalada_kwp, 3)}<span>kWp</span>`, `${r.sistema.n_modulos} módulos`);
+  if (ger) {
+    h += cartao('Geração estimada', `${fmtFv(ger.geracao_mensal_kwh, 1)}<span>kWh/mês</span>`);
+    h += cartao('Cobertura do consumo', `${fmtFv(ger.cobertura_consumo_pct, 1)}<span>%</span>`);
+  }
+  if (orc) {
+    h += cartao('Custo dos equipamentos', formatarMoeda(orc.custo_equipamentos));
+    h += cartao('Outros custos', formatarMoeda(orc.custo_outros));
+    h += cartao('Custo total estimado', formatarMoeda(orc.custo_total));
+  }
+  h += '</div>';
+  if (orc && orc.aviso_outros_zerados) {
+    h += '<div class="aviso-academico">Atenção: os outros custos (estrutura, cabeamento, proteções e instalação) estão em R$ 0,00. O custo total mostra somente os equipamentos; informe esses custos no formulário para uma estimativa mais completa.</div>';
+  }
+
+  const pares = [];
+  pares.push(['HSP utilizado', `${fmtFv(r.hsp.hsp, 3)} kWh/m².dia — ${escapeHtml(textoOrigemHsp(r.hsp))}` +
+    (r.hsp.origem !== 'manual' ? `<br><span class="ajuda">Fonte: ${escapeHtml(r.hsp.fonte)}. ${linkSeguro(r.hsp.url_fonte, 'abrir fonte')}</span>` : '')]);
+  pares.push(['Parâmetros', `η = ${fmtFv(par.eta, 2)}; D = ${fmtFv(par.D, 0)} dias; temperatura mínima = ${fmtFv(par.tmin_c, 0)} °C`]);
+  pares.push(['Módulos', r.sistema.n_modulos > 0
+    ? `${r.sistema.n_modulos} × ${escapeHtml(r.sistema.modulo)}${modEsc ? ` (${fmtFv(modEsc.potencia_wp, 0)} Wp, eficiência ${fmtFv(modEsc.eficiencia_pct, 1)}%)` : ''}` : '—']);
+  pares.push(['Inversor', r.sistema.inversor
+    ? `${escapeHtml(r.sistema.inversor)}${invEsc ? ` (${fmtFv(invEsc.potencia_ca_kw, 1)} kW, ${escapeHtml(invEsc.tipo)})` : ''}` : '—']);
+  const a = r.armazenamento;
+  if (!a.habilitado) {
+    pares.push(['Armazenamento', 'Não (solução sem baterias)']);
+  } else {
+    let texto = `Sim — autonomia de ${fmtFv(a.autonomia_h, 1)} h`;
+    if (a.e_autonomia_kwh === null || a.e_autonomia_kwh === undefined) {
+      texto += ' (as baterias ainda não foram dimensionadas, porque não há inversor compatível)';
+    } else {
+      texto += `; energia na autonomia ${fmtFv(a.e_autonomia_kwh, 2)} kWh`;
+      if (a.c_bat_kwh !== null && a.c_bat_kwh !== undefined) texto += `; capacidade nominal necessária ${fmtFv(a.c_bat_kwh, 2)} kWh`;
+      if (bat) texto += `; instalado: ${bat.n_bat} × ${escapeHtml(bat.descricao)} = ${fmtFv(bat.capacidade_nominal_total_kwh, 2)} kWh nominais (${fmtFv(bat.capacidade_util_total_kwh, 2)} kWh úteis)`;
+      else texto += ' (nenhuma bateria compatível com este inversor)';
+    }
+    pares.push(['Armazenamento', texto]);
+  }
+  h += dl(pares);
+
+  if (orc) {
+    h += '<h4 class="titulo-bloco">Orçamento</h4><div class="tabela-scroll"><table><thead><tr><th>Item</th><th class="num">Qtd.</th><th class="num">Preço unit.</th><th class="num">Subtotal</th><th>Tipo</th></tr></thead><tbody>';
+    orc.linhas.forEach(l => {
+      h += `<tr><td>${escapeHtml(l.descricao)}</td><td class="num">${fmtFv(l.quantidade, 0)}</td><td class="num">${formatarMoeda(l.preco_unitario)}</td><td class="num">${formatarMoeda(l.subtotal)}</td><td>${l.categoria === 'equipamentos' ? 'Equipamento' : 'Outro custo'}</td></tr>`;
+    });
+    h += `<tr class="linha-total"><td colspan="3">Custo dos equipamentos</td><td class="num">${formatarMoeda(orc.custo_equipamentos)}</td><td></td></tr>`;
+    h += `<tr class="linha-total"><td colspan="3">Outros custos</td><td class="num">${formatarMoeda(orc.custo_outros)}</td><td></td></tr>`;
+    h += `<tr class="linha-total"><td colspan="3"><strong>Custo total estimado</strong></td><td class="num"><strong>${formatarMoeda(orc.custo_total)}</strong></td><td></td></tr>`;
+    h += '</tbody></table></div>';
+  }
+
+  h += verificacoesHtml('Compatibilidade módulo × inversor', invEsc ? invEsc.verificacoes : null);
+  h += verificacoesHtml('Compatibilidade bateria × inversor', bat ? bat.verificacoes : null);
+
+  // alternativas consideradas
+  h += '<details class="alternativas"><summary>Alternativas consideradas</summary>';
+  h += '<h4 class="titulo-bloco">Módulos (menor custo do arranjo primeiro)</h4><div class="tabela-scroll"><table><thead><tr><th>Módulo</th><th class="num">Potência (Wp)</th><th class="num">Qtd.</th><th class="num">Instalada (kWp)</th><th class="num">Custo do arranjo</th><th></th></tr></thead><tbody>';
+  r.modulos.opcoes.forEach(m => {
+    h += `<tr><td>${escapeHtml(m.fabricante)} ${escapeHtml(m.modelo)}</td><td class="num">${fmtFv(m.potencia_wp, 0)}</td><td class="num">${m.n}</td><td class="num">${fmtFv(m.p_instalada_kwp, 2)}</td><td class="num">${formatarMoeda(m.custo_arranjo)}</td><td>${m.id === r.modulos.escolhido ? '<span class="selo-uso">em uso</span>' : ''}${m.recomendado ? ' <span class="selo-uso">menor custo</span>' : ''}</td></tr>`;
+  });
+  h += '</tbody></table></div>';
+
+  h += '<h4 class="titulo-bloco">Inversores compatíveis</h4>';
+  if (r.inversores.opcoes.length) {
+    h += '<div class="tabela-scroll"><table><thead><tr><th>Inversor</th><th>Tipo</th><th class="num">Potência CA (kW)</th><th class="num">Preço</th><th></th></tr></thead><tbody>';
+    r.inversores.opcoes.forEach(i => {
+      h += `<tr><td>${escapeHtml(i.fabricante)} ${escapeHtml(i.modelo)}</td><td>${escapeHtml(i.tipo)}</td><td class="num">${fmtFv(i.potencia_ca_kw, 1)}</td><td class="num">${formatarMoeda(i.preco_unitario)}</td><td>${i.id === r.inversores.escolhido ? '<span class="selo-uso">em uso</span>' : ''}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  } else {
+    h += '<p class="ajuda">Nenhum inversor compatível com este arranjo.</p>';
+  }
+  if (r.inversores.descartados.length) {
+    h += '<h4 class="titulo-bloco">Inversores descartados (e por quê)</h4><div class="tabela-scroll"><table><thead><tr><th>Inversor</th><th>Motivo</th></tr></thead><tbody>';
+    r.inversores.descartados.forEach(i => {
+      h += `<tr><td>${escapeHtml(i.fabricante)} ${escapeHtml(i.modelo)}</td><td>${escapeHtml(motivosFalha(i.verificacoes))}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+
+  if (a.habilitado) {
+    h += '<h4 class="titulo-bloco">Baterias compatíveis com o inversor</h4>';
+    if (r.baterias.opcoes.length) {
+      h += '<div class="tabela-scroll"><table><thead><tr><th>Bateria</th><th class="num">Qtd.</th><th class="num">Nominal total (kWh)</th><th class="num">Útil total (kWh)</th><th class="num">Custo do banco</th><th></th></tr></thead><tbody>';
+      r.baterias.opcoes.forEach(b => {
+        h += `<tr><td>${escapeHtml(b.fabricante)} ${escapeHtml(b.modelo)}</td><td class="num">${b.n_bat}</td><td class="num">${fmtFv(b.capacidade_nominal_total_kwh, 2)}</td><td class="num">${fmtFv(b.capacidade_util_total_kwh, 2)}</td><td class="num">${formatarMoeda(b.custo_banco)}</td><td>${b.id === r.baterias.escolhida ? '<span class="selo-uso">em uso</span>' : ''}</td></tr>`;
+      });
+      h += '</tbody></table></div>';
+    } else {
+      h += '<p class="ajuda">Nenhuma bateria compatível com este inversor.</p>';
+    }
+    if (r.baterias.descartadas.length) {
+      h += '<h4 class="titulo-bloco">Baterias descartadas (e por quê)</h4><div class="tabela-scroll"><table><thead><tr><th>Bateria</th><th>Motivo</th></tr></thead><tbody>';
+      r.baterias.descartadas.forEach(b => {
+        h += `<tr><td>${escapeHtml(b.fabricante)} ${escapeHtml(b.modelo)}</td><td>${escapeHtml(motivosFalha(b.verificacoes))}</td></tr>`;
+      });
+      h += '</tbody></table></div>';
+    }
+  }
+  h += '</details></div>';
+
+  caixa.innerHTML = h;
+  const bSalvar = porId('btn-solar-salvar');
+  if (bSalvar) bSalvar.addEventListener('click', salvarPropostaFv);
+  const bCsv = porId('btn-solar-csv');
+  if (bCsv) bCsv.addEventListener('click', exportarPropostaCsv);
+  const bPdf = porId('btn-solar-pdf');
+  if (bPdf) bPdf.addEventListener('click', exportarPropostaPdf);
+}
+
+/* ---------- propostas salvas (US32) ---------- */
+
+async function carregarPropostasFv() {
+  const caixa = porId('solar-lista-propostas');
+  try {
+    const resposta = await apiRequest('listar_propostas', { imovel_id: idImovelAtual });
+    renderizarListaPropostasFv(resposta.propostas);
+  } catch (erro) {
+    caixa.innerHTML = '<p class="ajuda">Não foi possível carregar as propostas salvas.</p>';
+  }
+}
+
+function renderizarListaPropostasFv(lista) {
+  const caixa = porId('solar-lista-propostas');
+  if (!lista.length) {
+    caixa.innerHTML = '<p class="ajuda">Nenhuma proposta salva para este imóvel.</p>';
+    return;
+  }
+  caixa.innerHTML = '<div class="tabela-scroll"><table><thead><tr><th>Proposta</th><th>Data</th><th class="num">Instalada (kWp)</th><th>Baterias</th><th class="num">Custo total</th><th></th></tr></thead><tbody>' +
+    lista.map(p => `<tr>
+      <td>${escapeHtml(p.titulo)}</td>
+      <td>${escapeHtml(formatarDataHora(p.criado_em))}</td>
+      <td class="num">${fmtFv(p.p_instalada_kwp, 2)}</td>
+      <td>${p.com_bateria ? 'Sim' : 'Não'}</td>
+      <td class="num">${formatarMoeda(p.custo_total)}</td>
+      <td style="white-space:nowrap;"><button class="btn btn-pequeno" data-acao="abrir" data-id="${p.id}">Abrir</button>
+        <button class="btn btn-pequeno btn-perigo" data-acao="excluir" data-id="${p.id}" data-titulo="${escapeAttr(p.titulo)}">Excluir</button></td>
+    </tr>`).join('') + '</tbody></table></div>';
+  caixa.querySelectorAll('button[data-acao]').forEach(botao => {
+    botao.addEventListener('click', () => {
+      const id = Number(botao.dataset.id);
+      if (botao.dataset.acao === 'abrir') abrirPropostaFv(id, lista.find(x => x.id === id));
+      else excluirPropostaFv(id, botao.dataset.titulo);
+    });
+  });
+}
+
+async function salvarPropostaFv() {
+  if (!propostaFvAtual || propostaFvAtual.salva || !propostaFvAtual.resultado.completa) return;
+  const padrao = `Proposta ${propostaFvAtual.imovelNome} - ${new Date().toLocaleDateString('pt-BR')}`;
+  const titulo = window.prompt('Nome da proposta:', padrao);
+  if (titulo === null) return;
+  try {
+    const resposta = await apiRequest('salvar_proposta', Object.assign({ imovel_id: idImovelAtual, titulo: titulo.trim() }, entradaFvAtual));
+    propostaFvAtual.salva = { id: resposta.id, titulo: resposta.titulo, criadoEm: '' };
+    renderizarPropostaFv();
+    carregarPropostasFv();
+    mostrarToast('Proposta salva.', 'sucesso');
+  } catch (erro) {
+    mostrarErroCampo('erro-solar', erro.message);
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
+function aplicarEntradaNoFormularioFv(entrada) {
+  [['f', 'solar-f'], ['eta', 'solar-eta'], ['D', 'solar-d'], ['tmin_c', 'solar-tmin']].forEach(([chave, idCampo]) => {
+    porId(idCampo).value = entrada[chave] !== undefined ? entrada[chave] : '';
+  });
+  const armazenamento = !!entrada.armazenamento;
+  porId('solar-armazenamento').checked = armazenamento;
+  porId('solar-autonomia').disabled = !armazenamento;
+  porId('solar-autonomia').value = (armazenamento && entrada.autonomia_h !== undefined) ? entrada.autonomia_h : '';
+  const outros = (entrada.outros_custos && !Array.isArray(entrada.outros_custos)) ? entrada.outros_custos : {};
+  document.querySelectorAll('[data-custo]').forEach(campo => {
+    campo.value = outros[campo.dataset.custo] !== undefined ? outros[campo.dataset.custo] : '';
+  });
+  selecaoFv = { modulo: entrada.modulo_id || '', inversor: entrada.inversor_id || '', bateria: entrada.bateria_id || '' };
+}
+
+async function abrirPropostaFv(id, resumo) {
+  try {
+    const resposta = await apiRequest('abrir_proposta', { id });
+    const enviados = (resposta.entrada && resposta.entrada.parametros_enviados) || {};
+    aplicarEntradaNoFormularioFv(enviados);
+    entradaFvAtual = enviados;
+    propostaFvAtual = {
+      resultado: resposta.resultado,
+      entrada: enviados,
+      imovelNome: resposta.proposta.imovel_nome,
+      salva: { id: resposta.proposta.id, titulo: resposta.proposta.titulo, criadoEm: resposta.proposta.criado_em }
+    };
+    mostrarErroCampo('erro-solar', '');
+    renderizarPropostaFv();
+    porId('solar-resultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
+async function excluirPropostaFv(id, titulo) {
+  if (!confirm(`Excluir a proposta "${titulo}"? Esta ação não pode ser desfeita.`)) return;
+  try {
+    await apiRequest('excluir_proposta', { id });
+    if (propostaFvAtual && propostaFvAtual.salva && propostaFvAtual.salva.id === id) {
+      propostaFvAtual = null;
+      renderizarPropostaFv();
+    }
+    carregarPropostasFv();
+    mostrarToast('Proposta excluída.', 'sucesso');
+  } catch (erro) {
+    mostrarToast(erro.message, 'erro');
+  }
+}
+
+/* ---------- exportação da proposta (mesmo padrão da exportação da CP1) ---------- */
+
+function linhasResumoProposta(p) {
+  const r = p.resultado;
+  const par = r.parametros;
+  const orc = r.orcamento;
+  const ger = r.geracao;
+  const a = r.armazenamento;
+  const bat = r.sistema.bateria;
+  const modEsc = r.modulos.opcoes.find(m => m.id === r.modulos.escolhido) || null;
+  const invEsc = r.inversores.opcoes.find(i => i.id === r.inversores.escolhido) || null;
+  const linhas = [
+    ['Consumo de referência', `${fmtFv(r.consumo.valor_kwh_mes, 2)} kWh/mês (${r.consumo.origem === 'manual' ? 'informado manualmente' : 'estimado pelos equipamentos'})`],
+    ['Percentual de atendimento (f)', `${fmtFv(par.f, 1)} %`],
+    ['Energia mensal a gerar (E_FV)', `${fmtFv(r.e_fv_kwh_mes, 2)} kWh/mês`],
+    ['HSP utilizado', `${fmtFv(r.hsp.hsp, 3)} kWh/m².dia - ${textoOrigemHsp(r.hsp)}`],
+    ['Fonte do HSP', r.hsp.origem === 'manual' ? 'Informado manualmente pelo usuário' : `${r.hsp.fonte} (${r.hsp.url_fonte})`],
+    ['Fator global de desempenho (eta)', fmtFv(par.eta, 2)],
+    ['Dias do mês (D)', fmtFv(par.D, 0)],
+    ['Temperatura mínima de projeto', `${fmtFv(par.tmin_c, 0)} °C`],
+    ['Potência FV calculada (P_FV)', `${fmtFv(r.p_fv_kwp, 3)} kWp`],
+    ['Potência instalada', `${fmtFv(r.sistema.p_instalada_kwp, 3)} kWp`],
+    ['Módulos', `${r.sistema.n_modulos} x ${r.sistema.modulo}${modEsc ? ` (${fmtFv(modEsc.potencia_wp, 0)} Wp)` : ''}`],
+    ['Inversor', `${r.sistema.inversor}${invEsc ? ` (${fmtFv(invEsc.potencia_ca_kw, 1)} kW, ${invEsc.tipo})` : ''}`]
+  ];
+  if (!a.habilitado) {
+    linhas.push(['Armazenamento', 'Não (solução sem baterias)']);
+  } else {
+    linhas.push(['Armazenamento', `Sim - autonomia de ${fmtFv(a.autonomia_h, 1)} h`]);
+    linhas.push(['Capacidade de armazenamento calculada (nominal)', `${fmtFv(a.c_bat_kwh, 2)} kWh`]);
+    if (bat) {
+      linhas.push(['Capacidade de armazenamento instalada', `${bat.n_bat} x ${bat.descricao} = ${fmtFv(bat.capacidade_nominal_total_kwh, 2)} kWh nominais (${fmtFv(bat.capacidade_util_total_kwh, 2)} kWh úteis)`]);
+    }
+  }
+  if (ger) {
+    linhas.push(['Geração estimada', `${fmtFv(ger.geracao_mensal_kwh, 2)} kWh/mês`]);
+    linhas.push(['Cobertura do consumo', `${fmtFv(ger.cobertura_consumo_pct, 1)} %`]);
+  }
+  linhas.push(['Custo dos equipamentos', formatarMoeda(orc.custo_equipamentos)]);
+  linhas.push(['Outros custos', formatarMoeda(orc.custo_outros)]);
+  linhas.push(['Custo total estimado', formatarMoeda(orc.custo_total)]);
+  return linhas;
+}
+
+function exportarPropostaCsv() {
+  const p = propostaFvAtual;
+  if (!p || !p.resultado.completa) return;
+  const r = p.resultado;
+  const linhas = [['Proposta preliminar de sistema fotovoltaico'], ['Imóvel', p.imovelNome], ['Aviso', r.aviso_limitacoes], [], ['Item', 'Valor']];
+  linhasResumoProposta(p).forEach(l => linhas.push(l));
+  linhas.push([]);
+  linhas.push(['Orçamento']);
+  linhas.push(['Descrição', 'Quantidade', 'Preço unitário', 'Subtotal', 'Tipo']);
+  r.orcamento.linhas.forEach(l => linhas.push([l.descricao, fmtFv(l.quantidade, 0), formatarMoeda(l.preco_unitario), formatarMoeda(l.subtotal), l.categoria === 'equipamentos' ? 'Equipamento' : 'Outro custo']));
+  baixarCsv(linhas, `proposta_fv_${p.imovelNome.replace(/\s+/g, '_')}.csv`);
+}
+
+function exportarPropostaPdf() {
+  const p = propostaFvAtual;
+  if (!p || !p.resultado.completa) return;
+  if (typeof window.jspdf === 'undefined') {
+    mostrarToast('Não foi possível carregar a biblioteca de PDF (verifique a conexão com a internet).', 'erro');
+    return;
+  }
+  const r = p.resultado;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const margem = 14;
+  let y = 18;
+  const avancar = (h) => { y += h; if (y > 280) { doc.addPage(); y = 18; } };
+  const paragrafo = (texto, largura) => {
+    doc.splitTextToSize(String(texto), largura || 182).forEach(linha => { doc.text(linha, margem, y); avancar(5.2); });
+  };
+  const secao = (titulo) => {
+    avancar(3);
+    doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text(titulo, margem, y); doc.setFont('helvetica', 'normal');
+    avancar(7); doc.setFontSize(10);
+  };
+
+  doc.setFontSize(16); doc.text('Proposta preliminar de sistema fotovoltaico', margem, y); avancar(9);
+  doc.setFontSize(11); doc.text(`Imóvel: ${p.imovelNome}`, margem, y); avancar(8);
+  doc.setFontSize(9); paragrafo(`AVISO: ${r.aviso_limitacoes}`); doc.setFontSize(10);
+
+  secao('Dimensionamento');
+  linhasResumoProposta(p).forEach(l => paragrafo(`${l[0]}: ${l[1]}`));
+
+  secao('Orçamento');
+  doc.setFont('helvetica', 'bold');
+  doc.text('Item', margem, y); doc.text('Qtd.', 125, y, { align: 'right' }); doc.text('Preço unit.', 158, y, { align: 'right' }); doc.text('Subtotal', 196, y, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); avancar(6);
+  r.orcamento.linhas.forEach(l => {
+    const partes = doc.splitTextToSize(l.descricao, 100);
+    doc.text(partes[0], margem, y);
+    doc.text(fmtFv(l.quantidade, 0), 125, y, { align: 'right' });
+    doc.text(formatarMoeda(l.preco_unitario), 158, y, { align: 'right' });
+    doc.text(formatarMoeda(l.subtotal), 196, y, { align: 'right' });
+    avancar(5.2);
+    partes.slice(1).forEach(resto => { doc.text(resto, margem, y); avancar(5.2); });
+  });
+  avancar(2);
+  doc.text('Custo dos equipamentos', margem, y); doc.text(formatarMoeda(r.orcamento.custo_equipamentos), 196, y, { align: 'right' }); avancar(5.5);
+  doc.text('Outros custos', margem, y); doc.text(formatarMoeda(r.orcamento.custo_outros), 196, y, { align: 'right' }); avancar(5.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Custo total estimado', margem, y); doc.text(formatarMoeda(r.orcamento.custo_total), 196, y, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); avancar(8);
+  if (r.orcamento.aviso_outros_zerados) {
+    doc.setFontSize(9); paragrafo('Atenção: os outros custos (estrutura, cabeamento, proteções e instalação) estão em R$ 0,00; o total mostra somente os equipamentos.'); doc.setFontSize(10);
+  }
+  doc.save(`proposta_fv_${p.imovelNome.replace(/\s+/g, '_')}.pdf`);
+}
+
+/* ---------- eventos da aba Solar ---------- */
+
+popularUfSolar();
+
+porId('btn-solar-dimensionar').addEventListener('click', () => {
+  selecaoFv.inversor = '';
+  selecaoFv.bateria = '';
+  dimensionarSolar();
+});
+
+porId('solar-armazenamento').addEventListener('change', (ev) => {
+  porId('solar-autonomia').disabled = !ev.target.checked;
+  selecaoFv.inversor = '';
+  selecaoFv.bateria = '';
+});
+
+porId('solar-cidade').addEventListener('change', () => {
+  if (!catalogoFv) return;
+  const nome = porId('solar-cidade').value.trim().toLowerCase();
+  const achada = catalogoFv.cidades.find(c => c.cidade.toLowerCase() === nome);
+  if (achada) porId('solar-uf').value = achada.uf;
+});
+
+porId('solar-sel-modulo').addEventListener('change', (ev) => {
+  selecaoFv.modulo = ev.target.value;
+  selecaoFv.inversor = '';
+  selecaoFv.bateria = '';
+  dimensionarSolar();
+});
+porId('solar-sel-inversor').addEventListener('change', (ev) => {
+  selecaoFv.inversor = ev.target.value;
+  selecaoFv.bateria = '';
+  dimensionarSolar();
+});
+porId('solar-sel-bateria').addEventListener('change', (ev) => {
+  selecaoFv.bateria = ev.target.value;
+  dimensionarSolar();
 });
 
 /* =========================================================================
