@@ -383,6 +383,7 @@ function confirmarExclusaoImovel(id) {
 }
 
 function criarNovoImovel() {
+  if (typeof cancelarEdicaoEquipamento === 'function') cancelarEdicaoEquipamento();
   idImovelAtual = null;
   limparSolar();
   document.getElementById('titulo-imovel').textContent = 'Novo imóvel';
@@ -397,6 +398,7 @@ function criarNovoImovel() {
 }
 
 function abrirImovel(id) {
+  if (typeof cancelarEdicaoEquipamento === 'function') cancelarEdicaoEquipamento();
   idImovelAtual = id;
   limparSolar();
   const im = estado.imoveis.find(i => i.id === id);
@@ -547,6 +549,57 @@ document.getElementById('equip-horas-semana').addEventListener('input', (ev) => 
   }
 });
 
+let idEquipEmEdicao = null;
+
+function limparFormularioEquipamento() {
+  document.getElementById('equip-nome').value = '';
+  document.getElementById('equip-potencia').value = '';
+  document.getElementById('equip-quantidade').value = 1;
+  document.getElementById('equip-horas-semana').value = 0;
+  document.getElementById('equip-horas-fds').value = 0;
+  document.getElementById('equip-mesmo-fds').checked = true;
+  document.getElementById('equip-mesmo-fds').dispatchEvent(new Event('change'));
+}
+
+function cancelarEdicaoEquipamento() {
+  idEquipEmEdicao = null;
+  document.getElementById('btn-add-equipamento').textContent = 'Adicionar equipamento';
+  document.getElementById('btn-cancelar-edicao').classList.add('hidden');
+  document.querySelector('#aba-equipamentos h3').textContent = 'Novo equipamento';
+  limparFormularioEquipamento();
+  mostrarErroCampo('erro-equipamento', '');
+}
+
+function iniciarEdicaoEquipamento(e) {
+  idEquipEmEdicao = e.id;
+  document.getElementById('equip-nome').value = e.nome;
+  const selectCategoria = document.getElementById('equip-categoria');
+  if ([...selectCategoria.options].some(o => o.value === e.categoria)) selectCategoria.value = e.categoria;
+  document.getElementById('equip-potencia').value = e.potencia;
+  document.getElementById('equip-quantidade').value = e.quantidade;
+  document.getElementById('equip-horas-semana').value = e.horasSemana;
+  document.getElementById('equip-mesmo-fds').checked = Number(e.horasSemana) === Number(e.horasFimSemana);
+  document.getElementById('equip-mesmo-fds').dispatchEvent(new Event('change'));
+  document.getElementById('equip-horas-fds').value = e.horasFimSemana;
+  document.getElementById('btn-add-equipamento').textContent = 'Salvar alterações';
+  document.getElementById('btn-cancelar-edicao').classList.remove('hidden');
+  document.querySelector('#aba-equipamentos h3').textContent = 'Editar equipamento';
+  mostrarErroCampo('erro-equipamento', '');
+  document.getElementById('equip-nome').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// botão "Cancelar edição" criado ao lado do botão principal (não precisa mexer no HTML do PHP)
+(function criarBotaoCancelarEdicao() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'btn-cancelar-edicao';
+  btn.className = 'btn hidden';
+  btn.style.marginLeft = '8px';
+  btn.textContent = 'Cancelar edição';
+  btn.addEventListener('click', cancelarEdicaoEquipamento);
+  document.getElementById('btn-add-equipamento').insertAdjacentElement('afterend', btn);
+})();
+
 document.getElementById('btn-add-equipamento').addEventListener('click', async () => {
   const nome = document.getElementById('equip-nome').value;
   const categoria = document.getElementById('equip-categoria').value;
@@ -568,23 +621,31 @@ document.getElementById('btn-add-equipamento').addEventListener('click', async (
   mostrarErroCampo('erro-equipamento', '');
 
   const im = estado.imoveis.find(i => i.id === idImovelAtual);
-  im.equipamentos.push({
-    id: gerarId(),
+  const dados = {
     nome: nome.trim(),
     categoria,
     potencia: Number(potencia),
     quantidade: Number(quantidade),
     horasSemana: Number(horasSemana),
     horasFimSemana: Number(horasFds)
-  });
-  await salvarEstado();
-  document.getElementById('equip-nome').value = '';
-  document.getElementById('equip-potencia').value = '';
-  document.getElementById('equip-quantidade').value = 1;
-  document.getElementById('equip-horas-semana').value = 0;
-  document.getElementById('equip-horas-fds').value = 0;
+  };
+  const editando = idEquipEmEdicao !== null;
+  if (editando) {
+    const existente = im.equipamentos.find(x => x.id === idEquipEmEdicao);
+    if (!existente) { cancelarEdicaoEquipamento(); return; }
+    Object.assign(existente, dados);
+    // remove o consumo calculado antigo para o cálculo refletir os novos valores até o servidor recalcular
+    delete existente.consumoMensalKwh;
+    delete im.consumoTotalKwh;
+    delete im.custoEstimadoReais;
+  } else {
+    im.equipamentos.push({ id: gerarId(), ...dados });
+  }
+  const salvou = await salvarEstado();
+  if (!salvou) return;
+  cancelarEdicaoEquipamento();
   renderizarEquipamentos();
-  mostrarToast('Equipamento adicionado.', 'sucesso');
+  mostrarToast(editando ? 'Equipamento atualizado.' : 'Equipamento adicionado.', 'sucesso');
 });
 
 function renderizarEquipamentos() {
@@ -605,8 +666,10 @@ function renderizarEquipamentos() {
       <td class="num">${e.horasSemana}</td>
       <td class="num">${e.horasFimSemana}</td>
       <td class="num">${consumo.toFixed(2)}</td>
-      <td><button class="btn btn-pequeno btn-perigo">Remover</button></td>`;
-    tr.querySelector('button').addEventListener('click', async () => {
+      <td style="white-space:nowrap;"><button class="btn btn-pequeno btn-editar">Editar</button> <button class="btn btn-pequeno btn-perigo btn-remover-equip">Remover</button></td>`;
+    tr.querySelector('.btn-editar').addEventListener('click', () => iniciarEdicaoEquipamento(e));
+    tr.querySelector('.btn-remover-equip').addEventListener('click', async () => {
+      if (idEquipEmEdicao === e.id) cancelarEdicaoEquipamento();
       im.equipamentos = im.equipamentos.filter(x => x.id !== e.id);
       await salvarEstado();
       renderizarEquipamentos();
@@ -737,11 +800,12 @@ function baixarCsv(linhas, nomeArquivo) {
 document.getElementById('btn-exportar-csv').addEventListener('click', () => {
   const im = estado.imoveis.find(i => i.id === idImovelAtual);
   if (!im) return;
-  const linhas = [['Imóvel', im.nome], ['Endereço', im.endereco], [], ['Equipamento', 'Categoria', 'Consumo (kWh/mês)']];
-  im.equipamentos.forEach(e => linhas.push([e.nome, e.categoria, calcularConsumoEquipamento(e).toFixed(2)]));
+  const linhas = [['Imóvel', im.nome], ['Endereço', im.endereco], [], ['Equipamento', 'Categoria', 'Potência (W)', 'Quantidade', 'Horas/dia (seg. a sex.)', 'Horas/dia (sáb. e dom.)', 'Consumo (kWh/mês)']];
+  im.equipamentos.forEach(e => linhas.push([e.nome, e.categoria, e.potencia, e.quantidade, e.horasSemana, e.horasFimSemana, calcularConsumoEquipamento(e).toFixed(2)]));
   linhas.push([]);
-  linhas.push(['Consumo total (kWh/mês)', calcularConsumoTotal(im).toFixed(2)]);
-  if (im.tarifa) linhas.push(['Custo estimado', formatarMoeda(calcularCusto(calcularConsumoTotal(im), im.tarifa))]);
+  linhas.push(['Consumo total (kWh/mês)', '', '', '', '', '', calcularConsumoTotal(im).toFixed(2)]);
+  if (im.tarifa) linhas.push(['Tarifa (R$/kWh)', '', '', '', '', '', im.tarifa]);
+  if (im.tarifa) linhas.push(['Custo estimado', '', '', '', '', '', formatarMoeda(calcularCusto(calcularConsumoTotal(im), im.tarifa))]);
   baixarCsv(linhas, `relatorio_${im.nome.replace(/\s+/g, '_')}.csv`);
 });
 
@@ -763,9 +827,13 @@ document.getElementById('btn-exportar-pdf').addEventListener('click', () => {
   doc.setFontSize(10);
   im.equipamentos.forEach(e => {
     const consumo = calcularConsumoEquipamento(e).toFixed(2);
+    if (y > 262) { doc.addPage(); y = 18; }
+    doc.setFontSize(10);
     doc.text(`${e.nome} (${e.categoria}) — ${consumo} kWh/mês`, 16, y);
-    y += 6;
-    if (y > 275) { doc.addPage(); y = 18; }
+    y += 5;
+    doc.setFontSize(9);
+    doc.text(`Potência: ${e.potencia} W | Qtd.: ${e.quantidade} | Uso seg. a sex.: ${e.horasSemana} h/dia | Uso sáb. e dom.: ${e.horasFimSemana} h/dia`, 20, y);
+    y += 7;
   });
   y += 6;
   const total = calcularConsumoTotal(im);
@@ -804,14 +872,37 @@ function localizarValorColuna(linhaObjeto, coluna) {
   return chave === undefined ? undefined : linhaObjeto[chave];
 }
 
-// "1500", "1.500", "1500,5", "1.500,5", "1500 W" -> número (ou NaN)
-function converterPotencia(bruta) {
-  if (typeof bruta === 'number') return bruta;
-  if (bruta === undefined || bruta === null) return NaN;
-  let t = String(bruta).trim().replace(/\s*w(atts?)?$/i, '').replace(/\s/g, '');
+// "1500", "1.500", "1500,5", "1.500,5", "1500 W", "8h" -> número (ou NaN)
+function converterNumero(bruto) {
+  if (typeof bruto === 'number') return bruto;
+  if (bruto === undefined || bruto === null) return NaN;
+  let t = String(bruto).trim().replace(/\s*(w(atts?)?|h(oras?)?)$/i, '').replace(/\s/g, '');
   if (t === '') return NaN;
   if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
   return Number(t);
+}
+const converterPotencia = converterNumero;
+
+function celulaVazia(v) {
+  return v === undefined || v === null || String(v).trim() === '';
+}
+
+// Colunas opcionais: quantidade e horas de uso (semana / fim de semana).
+// Aceita "quantidade", "qtd", "horas_semana", "horas uso fim de semana", "horas_fds", ou só "horas" (vale para os dois perfis).
+function localizarOpcionais(linha) {
+  const r = { quantidade: undefined, horasSemana: undefined, horasFds: undefined, horasGeral: undefined };
+  Object.keys(linha).forEach(k => {
+    const n = normalizarChave(k);
+    if (n.startsWith('quant') || n === 'qtd' || n === 'qtde' || n === 'qtd.') r.quantidade = linha[k];
+    else if (/hora|^h[\s_]/.test(n)) {
+      if (/fim|fds|sab|dom/.test(n)) r.horasFds = linha[k];
+      else if (/semana|util|seg/.test(n)) r.horasSemana = linha[k];
+      else r.horasGeral = linha[k];
+    }
+  });
+  if (r.horasSemana === undefined) r.horasSemana = r.horasGeral;
+  if (r.horasFds === undefined) r.horasFds = r.horasGeral;
+  return r;
 }
 
 function validarEProcessarLinhas(linhasBrutas) {
@@ -821,15 +912,34 @@ function validarEProcessarLinhas(linhasBrutas) {
     const numeroLinha = indice + 2; // +1 cabeçalho, +1 base 1
     const nome = localizarValorColuna(linha, 'nome');
     const categoria = localizarValorColuna(linha, 'categoria');
-    const potencia = converterPotencia(localizarValorColuna(linha, 'potencia'));
+    const potencia = converterNumero(localizarValorColuna(linha, 'potencia'));
+    const op = localizarOpcionais(linha);
     const motivos = [];
     if (!validarTexto(nome)) motivos.push('nome ausente');
     if (!validarTexto(categoria)) motivos.push('categoria ausente');
     if (!validarPotencia(potencia)) motivos.push('potência inválida (deve ser numérica e maior que zero)');
+
+    // opcionais: se a célula estiver vazia usa o padrão; se tiver valor inválido, rejeita a linha
+    let quantidade = 1;
+    if (!celulaVazia(op.quantidade)) {
+      quantidade = converterNumero(op.quantidade);
+      if (!validarQuantidade(quantidade)) motivos.push('quantidade inválida (inteiro maior que zero)');
+    }
+    let horasSemana = 0;
+    if (!celulaVazia(op.horasSemana)) {
+      horasSemana = converterNumero(op.horasSemana);
+      if (!validarHoras(horasSemana)) motivos.push('horas de uso (semana) inválidas (0 a 24)');
+    }
+    let horasFimSemana = horasSemana; // sem coluna de fim de semana: repete as horas da semana
+    if (!celulaVazia(op.horasFds)) {
+      horasFimSemana = converterNumero(op.horasFds);
+      if (!validarHoras(horasFimSemana)) motivos.push('horas de uso (fim de semana) inválidas (0 a 24)');
+    }
+
     if (motivos.length > 0) {
       invalidas.push({ numeroLinha, motivos });
     } else {
-      validas.push({ nome: String(nome).trim(), categoria: String(categoria).trim(), potencia });
+      validas.push({ nome: String(nome).trim(), categoria: String(categoria).trim(), potencia, quantidade, horasSemana, horasFimSemana });
     }
   });
   return { validas, invalidas };
@@ -899,7 +1009,7 @@ document.getElementById('btn-confirmar-importacao').addEventListener('click', as
     }
     im.equipamentos.push({
       id: gerarId(), nome: linha.nome, categoria: linha.categoria, potencia: linha.potencia,
-      quantidade: 1, horasSemana: 0, horasFimSemana: 0
+      quantidade: linha.quantidade, horasSemana: linha.horasSemana, horasFimSemana: linha.horasFimSemana
     });
   });
   await salvarEstado();

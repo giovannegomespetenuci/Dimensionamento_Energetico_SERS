@@ -1119,7 +1119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <div id="aba-importar" class="aba-imovel-conteudo hidden">
         <div class="painel">
           <h3>Importar equipamentos via planilha</h3>
-          <p class="ajuda">Formatos aceitos: CSV ou XLSX, com colunas <strong>nome</strong>, <strong>categoria</strong> e <strong>potencia</strong>. Equipamentos importados entram com quantidade 1 e horas de uso zeradas — ajuste-os na aba Equipamentos.</p>
+          <p class="ajuda">Formatos aceitos: CSV ou XLSX. Colunas obrigatórias: <strong>nome</strong>, <strong>categoria</strong> e <strong>potencia</strong>. Colunas opcionais: <strong>quantidade</strong> (padrão 1), <strong>horas_semana</strong> e <strong>horas_fim_semana</strong> (padrão 0; sem a coluna de fim de semana, repete as horas da semana). Também dá para ajustar tudo depois, pelo botão Editar na aba Equipamentos.</p>
           <div class="zona-upload">
             <input type="file" id="input-arquivo-planilha" accept=".csv,.xlsx,.xls">
           </div>

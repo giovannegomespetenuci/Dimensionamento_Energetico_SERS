@@ -337,7 +337,7 @@ A sessão PHP utiliza `usuario_id` e `email` para garantir que cada usuário car
 - quantidade inteira maior que zero;
 - horas de uso entre 0 e 24;
 - separação entre dias úteis e fins de semana;
-- remoção de equipamentos;
+- edição e remoção de equipamentos;
 - vínculo com imóvel e categoria.
 
 ### Cálculo e análise
@@ -355,8 +355,8 @@ A sessão PHP utiliza `usuario_id` e `email` para garantir que cada usuário car
 ### Importação e exportação
 
 - importação de CSV;
-- importação de XLS/XLSX;
-- validação de nome, categoria e potência;
+- importação de XLS/XLSX, com colunas obrigatórias (nome, categoria, potencia) e opcionais (quantidade, horas_semana, horas_fim_semana);
+- validação de nome, categoria e potência (e, quando informadas, quantidade e horas de uso);
 - indicação das linhas inválidas;
 - confirmação antes da gravação;
 - exportação CSV;
@@ -554,14 +554,6 @@ O envio real de e-mail/link ainda não foi implementado. O código temporário �
 
 Gráfico, PDF e importação dependem de bibliotecas externas carregadas pela internet.
 
-### Edição de equipamentos
-
-Atualmente é possível cadastrar e remover equipamentos. Não há uma tela específica para editar diretamente uma linha já cadastrada; para alterar seus dados, o fluxo atual exige ajustar a origem do estado ou remover e cadastrar novamente.
-
-### Atualização por alteração
-
-O relatório é atualizado quando as ações de salvar, alterar tarifa, alterar limite, adicionar ou remover equipamento são executadas. Não há edição inline dos campos de um equipamento existente.
-
 ### Configuração de produção
 
 As credenciais do banco estão configuradas para o padrão local do Laragon. Antes de publicar o sistema, devem ser movidas para configuração segura fora do código.
@@ -591,11 +583,10 @@ Para um ambiente real, ainda devem ser avaliados:
 
 ### Prioridade média
 
-1. Criar edição de equipamentos já cadastrados.
-2. Tornar as mensagens de erro de unicidade de e-mail mais específicas.
-3. Adicionar testes externos de integração para os endpoints PHP.
-4. Testar importação com arquivos reais contendo linhas válidas e inválidas.
-5. Validar conteúdo dos arquivos PDF e CSV exportados.
+1. Tornar as mensagens de erro de unicidade de e-mail mais específicas.
+2. Adicionar testes externos de integração para os endpoints PHP.
+3. Testar importação com arquivos reais contendo linhas válidas e inválidas.
+4. Validar conteúdo dos arquivos PDF e CSV exportados.
 
 ### CP2 — evolução futura
 
