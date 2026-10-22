@@ -1140,9 +1140,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           <h4 class="titulo-bloco">1. Localização, consumo e atendimento</h4>
           <div class="linha-campos">
-            <div class="campo">
+            <div class="campo" style="position:relative;">
               <label for="solar-cidade">Cidade</label>
-              <input type="text" id="solar-cidade" list="lista-cidades-fv" autocomplete="off">
+              <input type="text" id="solar-cidade" autocomplete="off">
+              <div id="solar-sugestoes" class="sugestoes hidden" role="listbox"></div>
               <div class="ajuda">O catálogo de HSP tem as capitais; outras cidades usam a capital da UF.</div>
             </div>
             <div class="campo">

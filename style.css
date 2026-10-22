@@ -349,3 +349,9 @@ details.alternativas summary:hover{color:var(--accent);}
   .grade-metricas{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
   .valor-metrica{font-size:18px;}
 }
+
+/* sugestões de cidade (aba Solar) */
+.sugestoes{position:absolute;left:0;right:0;top:100%;z-index:20;margin-top:2px;background:var(--surface,#161b22);border:1px solid var(--border,#30363d);border-radius:6px;max-height:220px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.sugestoes.hidden{display:none}
+.sugestao{padding:8px 12px;cursor:pointer}
+.sugestao:hover{background:rgba(255,170,0,.15)}

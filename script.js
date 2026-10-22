@@ -1975,3 +1975,30 @@ async function iniciar() {
 }
 
 iniciar();
+
+
+/* ---------- sugestões de cidade (ignoram acentos e maiúsculas) ---------- */
+(function () {
+  const campo = porId('solar-cidade');
+  const caixa = porId('solar-sugestoes');
+  const semAcento = t => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  const fechar = () => { caixa.classList.add('hidden'); caixa.innerHTML = ''; };
+  campo.addEventListener('input', () => {
+    const termo = semAcento(campo.value);
+    if (!catalogoFv || termo === '') { fechar(); return; }
+    const achadas = catalogoFv.cidades.filter(c => semAcento(c.cidade).includes(termo)).slice(0, 8);
+    if (!achadas.length) { fechar(); return; }
+    caixa.innerHTML = achadas.map(c => `<div class="sugestao" role="option" data-cidade="${escapeAttr(c.cidade)}" data-uf="${escapeAttr(c.uf)}">${escapeHtml(c.cidade)} - ${escapeHtml(c.uf)}</div>`).join('');
+    caixa.classList.remove('hidden');
+  });
+  caixa.addEventListener('mousedown', (ev) => {
+    const item = ev.target.closest('.sugestao');
+    if (!item) return;
+    ev.preventDefault();
+    campo.value = item.dataset.cidade;
+    porId('solar-uf').value = item.dataset.uf;
+    fechar();
+  });
+  campo.addEventListener('blur', fechar);
+  campo.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') fechar(); });
+})();
