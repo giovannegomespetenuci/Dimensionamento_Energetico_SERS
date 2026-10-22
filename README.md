@@ -719,3 +719,23 @@ A conta passo a passo está em `fontes_e_premissas.md`.
 - Os parâmetros f, η, D e Tmin ficam dentro de cada proposta salva.
 - A recuperação de senha por e-mail real está descrita na seção 4.2.
 - Gráfico, PDF e importação usam bibliotecas carregadas por CDN (precisa de internet).
+
+
+---
+
+## 16. CP3 — Finalização (interface, relatório e persistência)
+
+| História | O que foi feito |
+|---|---|
+| US32 | Bibliotecas (Chart.js, jsPDF, PapaParse, SheetJS) agora ficam em `vendor/`: o sistema funciona sem internet (exceto a fonte do Google, que tem alternativa do sistema) |
+| US33 | Relatório com custo por kWp, economia mensal e retorno simples (payback) usando a tarifa do imóvel; PDF com gráfico geração x consumo e rodapé numerado |
+| US34 | Propostas podem ser renomeadas, duplicadas, filtradas, ordenadas e comparadas (duas a duas); `tests/verificacao_banco.sql` confere as chaves com CASCADE |
+| US35 | Recuperação de senha envia o código por e-mail (`mail()`), com validade de 15 min, uso único e limite de tentativas. Em modo demonstração (padrão) o código aparece na tela |
+| US37 | `config_app.php` (credenciais por variável de ambiente `SERS_*`), proteção CSRF, bloqueio após 5 logins errados, cookie de sessão HttpOnly/SameSite |
+| US38/US39 | `docs/CP 3/Checklist_Testes_Manuais.md`, backlog, Trello e roteiro do vídeo em `docs/CP 3/` |
+
+**Ativar o e-mail:** defina a variável de ambiente `SERS_EMAIL_ATIVO=1` (e configure o `sendmail` no `php.ini`). Sem isso o sistema permanece no modo demonstração.
+
+**Pendente (US36):** incluir Brasília na tabela de HSP. A fonte atual (Altoé & Ribeiro, 2020) não traz Brasília; o valor precisa vir do CRESESB (Atlas Brasileiro de Energia Solar) por latitude/longitude e ser registrado com fonte e data. Enquanto isso, Brasília pode usar o campo de HSP manual.
+
+**Não verificado:** este código da CP3 foi escrito sem PHP/MySQL no computador de desenvolvimento; os testes do checklist acima ainda precisam ser executados no Laragon.

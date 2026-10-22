@@ -1,9 +1,50 @@
 <?php
 declare(strict_types=1);
 
+// CP3 (US37): cookie de sessão restrito (HttpOnly, SameSite) e Secure quando houver HTTPS.
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path'     => '/',
+    'secure'   => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
 session_start();
 
 require_once __DIR__ . '/fv_lib.php';   // CP2: dimensionamento fotovoltaico (carrega config_fv.php)
+$CONFIG_APP = require __DIR__ . '/config_app.php';   // CP3: banco, e-mail e limites
+
+if (empty($_SESSION['csrf'])) {
+    $_SESSION['csrf'] = bin2hex(random_bytes(32));
+}
+
+function csrfValido(): bool
+{
+    $enviado = (string) ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    return $enviado !== '' && hash_equals((string) ($_SESSION['csrf'] ?? ''), $enviado);
+}
+
+/** US37: bloqueia temporariamente quem erra a senha várias vezes (contador por sessão e por e-mail). */
+function loginBloqueado(string $email): int
+{
+    global $CONFIG_APP;
+    $chave = 'login_' . sha1($email);
+    $t = $_SESSION[$chave] ?? ['n' => 0, 'ate' => 0];
+    return ($t['n'] >= $CONFIG_APP['login_max_tentativas'] && $t['ate'] > time()) ? $t['ate'] - time() : 0;
+}
+
+function loginRegistrarFalha(string $email): void
+{
+    global $CONFIG_APP;
+    $chave = 'login_' . sha1($email);
+    $t = $_SESSION[$chave] ?? ['n' => 0, 'ate' => 0];
+    if ($t['ate'] <= time()) {
+        $t['n'] = 0;
+    }
+    $t['n']++;
+    $t['ate'] = time() + $CONFIG_APP['login_bloqueio_seg'];
+    $_SESSION[$chave] = $t;
+}
 
 function responderJson(array $dados, int $status = 200): void
 {
@@ -17,7 +58,8 @@ function responderJson(array $dados, int $status = 200): void
 function banco(): mysqli
 {
     mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-    $conexao = new mysqli('127.0.0.1', 'root', '', 'dimensionamento_energetico');
+    global $CONFIG_APP;
+    $conexao = new mysqli($CONFIG_APP['db_host'], $CONFIG_APP['db_user'], $CONFIG_APP['db_senha'], $CONFIG_APP['db_nome']);
     $conexao->set_charset('utf8mb4');
     return $conexao;
 }
@@ -560,6 +602,9 @@ function fvapi_resumo_proposta(array $l): array
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $entrada = json_decode(file_get_contents('php://input'), true) ?? [];
     $acao = (string) ($entrada['acao'] ?? '');
+    if (!csrfValido()) {
+        responderJson(['erro' => 'Sessão inválida. Recarregue a página e tente novamente.'], 403);
+    }
     try {
         $db = banco();
         if ($acao === 'registrar') {
@@ -580,19 +625,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($acao === 'entrar') {
             $email = strtolower(trim((string) ($entrada['email'] ?? '')));
+            $espera = loginBloqueado($email);
+            if ($espera > 0) {
+                responderJson(['erro' => 'Muitas tentativas. Aguarde ' . (int) ceil($espera / 60) . ' minuto(s) para tentar novamente.'], 429);
+            }
             $stmt = $db->prepare('SELECT id, senha_hash FROM usuarios WHERE email = ?');
             $stmt->bind_param('s', $email);
             $stmt->execute();
             $usuario = $stmt->get_result()->fetch_assoc();
             if (!$usuario || !password_verify((string) ($entrada['senha'] ?? ''), $usuario['senha_hash'])) {
+                loginRegistrarFalha($email);
                 responderJson(['erro' => 'E-mail ou senha inválidos.'], 401);
             }
+            unset($_SESSION['login_' . sha1($email)]);
+            session_regenerate_id(true);
             $_SESSION['usuario_id'] = (int) $usuario['id'];
             $_SESSION['email'] = $email;
             responderJson(['ok' => true, 'email' => $email, 'estado' => carregarEstadoBanco($db, (int) $usuario['id'])]);
         }
         if ($acao === 'sair') {
-            session_destroy();
+            $_SESSION = ['csrf' => $_SESSION['csrf']];   // mantém o token: a página não recarrega ao sair
+            session_regenerate_id(true);
             responderJson(['ok' => true]);
         }
         if ($acao === 'carregar') {
@@ -605,18 +658,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($acao === 'solicitar_reset') {
             $email = strtolower(trim((string) ($entrada['email'] ?? '')));
             $codigo = (string) random_int(100000, 999999);
-            $expira = date('Y-m-d H:i:s', time() + 900);
+            $minutos = (int) $CONFIG_APP['reset_minutos'];
+            $expira = date('Y-m-d H:i:s', time() + $minutos * 60);
             $stmt = $db->prepare('UPDATE usuarios SET reset_token = ?, reset_token_expira = ? WHERE email = ?');
             $stmt->bind_param('sss', $codigo, $expira, $email);
             $stmt->execute();
             if ($stmt->affected_rows === 0) {
                 responderJson(['erro' => 'Não encontramos uma conta com este e-mail.'], 404);
             }
-            responderJson(['ok' => true, 'codigo' => $codigo]);
+            if (!$CONFIG_APP['email_ativo']) {
+                // modo demonstração (sem servidor de e-mail): o código aparece na tela
+                responderJson(['ok' => true, 'codigo' => $codigo, 'enviado_por_email' => false]);
+            }
+            $assunto = '=?UTF-8?B?' . base64_encode('Código para redefinir sua senha') . '?=';
+            $corpo = "Seu código de redefinição de senha é: $codigo\n\nEle vale por $minutos minutos e só pode ser usado uma vez.\n"
+                   . "Se você não pediu a redefinição, ignore esta mensagem.";
+            $cabecalhos = 'From: ' . $CONFIG_APP['email_remetente'] . "\r\nContent-Type: text/plain; charset=UTF-8";
+            if (!@mail($email, $assunto, $corpo, $cabecalhos)) {
+                responderJson(['erro' => 'Não foi possível enviar o e-mail agora. Tente novamente em instantes.'], 500);
+            }
+            responderJson(['ok' => true, 'enviado_por_email' => true]);
         }
         if ($acao === 'resetar_senha') {
             $email = strtolower(trim((string) ($entrada['email'] ?? '')));
             $codigo = trim((string) ($entrada['codigo'] ?? ''));
+            if (strlen((string) ($entrada['senha'] ?? '')) < 8) {
+                responderJson(['erro' => 'A nova senha deve ter ao menos 8 caracteres.'], 422);
+            }
+            $chaveReset = 'reset:' . $email;   // limita chutes do código de 6 dígitos
+            $espera = loginBloqueado($chaveReset);
+            if ($espera > 0) {
+                responderJson(['erro' => 'Muitas tentativas. Aguarde ' . (int) ceil($espera / 60) . ' minuto(s).'], 429);
+            }
             $senhaHash = password_hash((string) ($entrada['senha'] ?? ''), PASSWORD_DEFAULT);
             $stmt = $db->prepare(
                 'UPDATE usuarios SET senha_hash = ?, reset_token = NULL, reset_token_expira = NULL
@@ -625,6 +698,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param('sss', $senhaHash, $email, $codigo);
             $stmt->execute();
             if ($stmt->affected_rows === 0) {
+                loginRegistrarFalha($chaveReset);
                 responderJson(['erro' => 'Código inválido ou expirado.'], 422);
             }
             responderJson(['ok' => true]);
@@ -741,6 +815,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             responderJson(['ok' => true]);
         }
+        /* ---------------------- CP3: histórico de propostas ---------------------- */
+        if ($acao === 'renomear_proposta') {
+            $usuarioId = exigirUsuario();
+            $id = fvapi_id($entrada['id'] ?? null, 'Informe a proposta que deseja renomear.');
+            $titulo = is_scalar($entrada['titulo'] ?? null) ? trim((string) $entrada['titulo']) : '';
+            if ($titulo === '' || mb_strlen($titulo) > 150) {
+                throw new FvErro('O título da proposta deve ter de 1 a 150 caracteres.');
+            }
+            $stmt = $db->prepare('UPDATE propostas_fv SET titulo = ? WHERE id = ? AND usuario_id = ?');
+            $stmt->bind_param('sii', $titulo, $id, $usuarioId);
+            $stmt->execute();
+            $stmt = $db->prepare('SELECT COUNT(*) AS n FROM propostas_fv WHERE id = ? AND usuario_id = ?');
+            $stmt->bind_param('ii', $id, $usuarioId);
+            $stmt->execute();
+            if ((int) $stmt->get_result()->fetch_assoc()['n'] === 0) {
+                throw new FvErro('Proposta não encontrada.');
+            }
+            responderJson(['ok' => true, 'titulo' => $titulo]);
+        }
+        if ($acao === 'duplicar_proposta') {
+            $usuarioId = exigirUsuario();
+            $id = fvapi_id($entrada['id'] ?? null, 'Informe a proposta que deseja duplicar.');
+            $stmt = $db->prepare('SELECT titulo FROM propostas_fv WHERE id = ? AND usuario_id = ?');
+            $stmt->bind_param('ii', $id, $usuarioId);
+            $stmt->execute();
+            $origem = $stmt->get_result()->fetch_assoc();
+            if (!$origem) {
+                throw new FvErro('Proposta não encontrada.');
+            }
+            $novoTitulo = mb_substr('Cópia de ' . $origem['titulo'], 0, 150);
+            $stmt = $db->prepare(
+                'INSERT INTO propostas_fv (usuario_id, imovel_id, titulo, consumo_kwh_mes, percentual_atendimento, p_fv_kwp, p_instalada_kwp,
+                                           n_modulos, com_bateria, custo_equipamentos, custo_outros, custo_total, entrada_json, resultado_json)
+                 SELECT usuario_id, imovel_id, ?, consumo_kwh_mes, percentual_atendimento, p_fv_kwp, p_instalada_kwp,
+                        n_modulos, com_bateria, custo_equipamentos, custo_outros, custo_total, entrada_json, resultado_json
+                   FROM propostas_fv WHERE id = ? AND usuario_id = ?'
+            );
+            $stmt->bind_param('sii', $novoTitulo, $id, $usuarioId);
+            $stmt->execute();
+            responderJson(['ok' => true, 'id' => (int) $stmt->insert_id, 'titulo' => $novoTitulo]);
+        }
         responderJson(['erro' => 'Ação desconhecida.'], 400);
     } catch (InvalidArgumentException $erro) {
         responderJson(['erro' => $erro->getMessage()], 422);
@@ -756,15 +871,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="<?= htmlspecialchars((string) $_SESSION['csrf'], ENT_QUOTES) ?>">
 <title>Painel &mdash; Dimensionamento Energético Residencial</title>
 <link rel="stylesheet" href="style.css" type="text/css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="vendor/chart.umd.min.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/papaparse.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="caixa-toasts"></div>
@@ -1024,9 +1140,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
           <h4 class="titulo-bloco">1. Localização, consumo e atendimento</h4>
           <div class="linha-campos">
-            <div class="campo">
+            <div class="campo" style="position:relative;">
               <label for="solar-cidade">Cidade</label>
-              <input type="text" id="solar-cidade" list="lista-cidades-fv" autocomplete="off">
+              <input type="text" id="solar-cidade" autocomplete="off">
+              <div id="solar-sugestoes" class="sugestoes hidden" role="listbox"></div>
               <div class="ajuda">O catálogo de HSP tem as capitais; outras cidades usam a capital da UF.</div>
             </div>
             <div class="campo">
