@@ -1859,9 +1859,13 @@ porId('solar-armazenamento').addEventListener('change', (ev) => {
 
 porId('solar-cidade').addEventListener('change', () => {
   if (!catalogoFv) return;
-  const nome = porId('solar-cidade').value.trim().toLowerCase();
-  const achada = catalogoFv.cidades.find(c => c.cidade.toLowerCase() === nome);
-  if (achada) porId('solar-uf').value = achada.uf;
+  const semAcento = t => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  const nome = semAcento(porId('solar-cidade').value);
+  const achada = catalogoFv.cidades.find(c => semAcento(c.cidade) === nome);
+  if (achada) {
+    porId('solar-cidade').value = achada.cidade;   // corrige "sao paulo" para "São Paulo"
+    porId('solar-uf').value = achada.uf;
+  }
 });
 
 porId('solar-sel-modulo').addEventListener('change', (ev) => {
